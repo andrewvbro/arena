@@ -1,0 +1,32 @@
+{
+  "name": "arena-shooter",
+  "productName": "Arena",
+  "version": "1.0.0",
+  "description": "Online multiplayer FPS — 63 guns, perks, bots, zombie survival, 8 maps.",
+  "author": "andrewvbro",
+  "license": "MIT",
+  "main": "electron-main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^31.7.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.andrewvbro.arena",
+    "productName": "Arena",
+    "directories": { "output": "dist" },
+    "files": [
+      "electron-main.js",
+      "index.html",
+      "manifest.webmanifest",
+      "sw.js",
+      "icon.svg",
+      "vendor/**/*"
+    ],
+    "win": { "target": "portable" },
+    "portable": { "artifactName": "Arena-${version}-portable.exe" }
+  }
+}
