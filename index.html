@@ -287,7 +287,7 @@ let started=false, zombieMode=false, matchOver=false, scoreLimit=30, infiniteAmm
 const INSPECT_DUR=1.9;
 const clock=new THREE.Clock();
 let ARENA=30, SPAWNS=[[0,0]];
-let mapGroup=null;
+let mapGroup=null, meBody=null;
 
 // ===========================================================================
 // WEAPON CATALOGS
@@ -859,13 +859,37 @@ function renderPreview(dt){ if(!pvActive||!pvRenderer) return; pvPivot.rotation.
 // ===========================================================================
 // REMOTE PLAYER AVATARS
 // ===========================================================================
+// humanoid body — full=remote player (head/arms/gun), else=local first-person body (no head, no clipping)
+function buildHumanoid(color, full){
+  const g=new THREE.Group(); const col=new THREE.Color(color);
+  const bodyM=mat(col,0.6,0.1), legM=mat(0x2a2e33,0.75,0.08), armM=mat(col.clone().multiplyScalar(0.8),0.6,0.1);
+  g.add(part(new THREE.CylinderGeometry(0.21,0.24,0.5,12),bodyM,0,1.12,0));   // chest
+  g.add(part(new THREE.CylinderGeometry(0.2,0.21,0.28,12),bodyM,0,0.82,0));    // abdomen
+  function leg(x){ const pv=new THREE.Group(); pv.position.set(x,0.78,0);
+    const m=part(new THREE.CylinderGeometry(0.09,0.07,0.74,10),legM,0,-0.37,0); m.castShadow=true; pv.add(m);
+    pv.add(part(new THREE.BoxGeometry(0.12,0.07,0.22),legM,0,-0.72,-0.04)); g.add(pv); return pv; }
+  const legs=[leg(0.12),leg(-0.12)]; let arms=[];
+  if(full){
+    const head=part(new THREE.SphereGeometry(0.22,16,12),mat(0xe8d4c0,0.7),0,1.6,0); head.castShadow=true; g.add(head);
+    g.add(part(new THREE.BoxGeometry(0.3,0.1,0.07),mat(0x101418,0.3,0.5),0,1.6,-0.19));
+    function arm(x){ const pv=new THREE.Group(); pv.position.set(x,1.32,0); pv.add(part(new THREE.CylinderGeometry(0.07,0.06,0.5,8),armM,0,-0.25,0)); g.add(pv); pv.rotation.x=-0.5; return pv; }
+    arms=[arm(0.28),arm(-0.28)];
+    g.add(part(new THREE.BoxGeometry(0.1,0.12,0.5),mat(0x222222,0.6),0.26,1.05,-0.28)); // gun
+  }
+  g.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
+  g.userData={legs,arms,phase:rand(0,6)};
+  return g;
+}
+function animateWalk(g, speed, dt){
+  const u=g.userData; if(!u||!u.legs) return;
+  if(speed>0.6){ u.phase+=dt*(6+speed*0.7); const a=Math.min(0.7,speed*0.09)*Math.sin(u.phase);
+    u.legs[0].rotation.x=a; u.legs[1].rotation.x=-a;
+    if(u.arms.length){ u.arms[0].rotation.x=-0.5-a*0.4; u.arms[1].rotation.x=-0.5+a*0.4; } }
+  else { u.legs[0].rotation.x=lerp(u.legs[0].rotation.x,0,0.2); u.legs[1].rotation.x=lerp(u.legs[1].rotation.x,0,0.2); }
+}
 function makeAvatar(p){
-  const g=new THREE.Group(); const col=new THREE.Color(p.color);
-  const torso=part(new THREE.CylinderGeometry(0.34,0.34,1.25,14),mat(col,0.6,0.1),0,0.95,0); torso.castShadow=true; g.add(torso);
-  const head=part(new THREE.SphereGeometry(0.3,18,14),mat(0xe8d4c0,0.7),0,1.7,0); head.castShadow=true; g.add(head);
-  const visor=part(new THREE.BoxGeometry(0.34,0.1,0.06),mat(0x101418,0.3,0.5),0,1.72,-0.27); g.add(visor);
-  const gun=part(new THREE.BoxGeometry(0.1,0.12,0.55),mat(0x222222,0.6),0.28,1.25,-0.25); g.add(gun);
-  const tag=makeTag(p.name,col); tag.position.y=2.3; g.add(tag);
+  const g=buildHumanoid(p.color, true);
+  const tag=makeTag(p.name,new THREE.Color(p.color)); tag.position.y=2.3; g.add(tag);
   scene.add(g); p.group=g; p.tag=tag;
 }
 function makeTag(text,color){
@@ -982,7 +1006,7 @@ function makeBotAvatar(color){
   return g;
 }
 function spawnBot(name){
-  const color=0xd0402f; const g=makeBotAvatar(color); const tag=makeTag(name,new THREE.Color(color)); tag.position.y=2.3; g.add(tag); scene.add(g);
+  const color=0xd0402f; const g=buildHumanoid(color,true); const tag=makeTag(name,new THREE.Color(color)); tag.position.y=2.3; g.add(tag); scene.add(g);
   const sp=spawnPoint();
   const b={group:g,name,color,hp:100,pos:sp.clone(),eye:sp.clone(),yaw:0,fireCd:rand(0.5,1.5),strafe:Math.random()<0.5?1:-1,strafeT:0,alive:true,kills:0,deaths:0};
   bots.push(b); return b;
@@ -1004,7 +1028,9 @@ function updateBots(dt){
     }
     if(move.lengthSq()>0){ move.normalize().multiplyScalar(4.5*dt); b.pos.x+=move.x; b.pos.z+=move.z; }
     botBlock(b.pos); b.pos.x=clamp(b.pos.x,-ARENA+1,ARENA-1); b.pos.z=clamp(b.pos.z,-ARENA+1,ARENA-1);
+    const bx=b.group.position.x, bz=b.group.position.z;
     b.group.position.set(b.pos.x,0,b.pos.z); b.group.rotation.y=b.yaw;
+    animateWalk(b.group, Math.hypot(b.pos.x-bx,b.pos.z-bz)/Math.max(dt,0.001), dt);
     b.fireCd-=dt;
     if(me.alive && dist<60 && b.fireCd<=0 && botLOS(b.eye,camera.position)){
       b.fireCd=rand(0.35,0.75);
@@ -1134,7 +1160,7 @@ function applyCameraRot(){
   camera.rotation.set(0,0,0,'YXZ'); camera.rotateY(me.yaw); camera.rotateX(me.pitch); camera.rotateZ(-me.lean*0.12 + me.wallTilt);
 }
 function updateMovement(dt){
-  if(!me.alive){ camera.position.copy(me.pos); applyCameraRot(); return; }
+  if(!me.alive){ camera.position.copy(me.pos); applyCameraRot(); if(meBody) meBody.visible=false; return; }
   // stance hold logic
   const crouchHeld=keys['ControlLeft']||keys['KeyC'];
   if(me.stance!=='slide'){
@@ -1205,6 +1231,8 @@ function updateMovement(dt){
   // camera
   camera.position.copy(me.pos).addScaledVector(right,me.lean*0.5);
   applyCameraRot();
+  // first-person body (visible looking down; scales with stance so it stays below the eye)
+  if(meBody){ meBody.visible=true; meBody.position.set(me.pos.x,me.footY,me.pos.z); meBody.rotation.y=me.yaw; meBody.scale.y=clamp(me.eyeH/1.6,0.3,1.05); animateWalk(meBody, Math.hypot(me.vel.x,me.vel.z), dt); }
   // stance HUD
   $("stancetag").textContent = me.wallRunning?'WALL-RUNNING':me.stance==='slide'?'SLIDING':me.stance==='prone'?'PRONE':me.stance==='crouch'?'CROUCHING':(!me.onGround?'AIRBORNE':'STANDING');
   updateADS(dt);
@@ -1495,6 +1523,7 @@ function leaveMatch(){
   started=false; matchOver=false; zombieMode=false;
   clearEntities();
   me.kills=0; me.deaths=0; me.elims=0; me.hp=100; me.alive=true; me.stance='stand'; me.prone=false; me.ads=false;
+  if(meBody) meBody.visible=false;
   if(document.pointerLockElement) document.exitPointerLock();
   ['hud','pause','endscreen','respawn','wavebox','roombox'].forEach(idd=>$(idd).style.display='none');
   $("menu").style.display='flex'; status(""); updateLoadoutBar();
@@ -1576,9 +1605,11 @@ setInterval(()=>{ if(net&&started) sendHello(); },2500);
 function updateRemotes(dt){
   const nowp=performance.now();
   for(const id in players){ const p=players[id];
+    const px=p.group.position.x, pz=p.group.position.z;
     p.eye.lerp(p.tEye,1-Math.pow(0.0001,dt*1.2)); p.foot=lerp(p.foot,p.tFoot,1-Math.pow(0.0001,dt*1.2));
     p.yaw=lerpAngle(p.yaw,p.tYaw,1-Math.pow(0.0001,dt*1.5)); p.scaleY=lerp(p.scaleY,p.tScaleY||1,0.2);
     p.group.position.set(p.eye.x,p.foot,p.eye.z); p.group.rotation.y=p.yaw; p.group.scale.y=clamp(p.scaleY,0.3,1.05); p.group.visible=!p.dead;
+    const sp=Math.hypot(p.eye.x-px,p.eye.z-pz)/Math.max(dt,0.001); animateWalk(p.group, sp, dt);
     if(nowp-p.last>8000) removePlayer(id);
   }
 }
@@ -1672,6 +1703,8 @@ function beginGame(){
   if(botCount>0) spawnBots(botCount);
   else if(!zombieMode && Object.keys(players).length===0){ makeDummy(-6,-8); makeDummy(6,-3); makeDummy(0,8); }
   me.pos.copy(spawnPoint()); me.footY=0; me.vy=0;
+  if(meBody){ scene.remove(meBody); meBody.traverse(o=>{if(o.geometry)o.geometry.dispose();}); }
+  meBody=buildHumanoid(me.color,false); meBody.visible=true; scene.add(meBody);
   initLoadoutAmmo(); currentSlot='x'; equip('primary'); me.hp=MAXHP;
   matchOver=false; me.elims=0;
   updateHP(); refreshBoard();
