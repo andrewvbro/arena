@@ -61,6 +61,7 @@
   #wavebox .z{ font-size:12px; color:#aebfce; }
 
   #toast{ position:absolute; left:50%; top:24%; transform:translateX(-50%); font-size:30px; font-weight:700; opacity:0; text-shadow:0 3px 14px #000; transition:opacity .25s; text-align:center;}
+  #spawnprot{ position:absolute; left:50%; top:40%; transform:translateX(-50%); display:none; color:#7fd0ff; font-size:17px; font-weight:700; letter-spacing:.12em; text-shadow:0 2px 10px #000; }
   #respawn{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); text-align:center; display:none; }
   #respawn h2{ font-size:40px; color:#ff7676; }
   #respawn p{ color:#aebfce; margin-top:8px; }
@@ -176,6 +177,7 @@
   <div id="killfeed"></div>
   <div id="wavebox"><div class="w">WAVE 1</div><div class="z">Zombies: 0</div></div>
   <div id="toast"></div>
+  <div id="spawnprot">🛡 SPAWN PROTECTED</div>
   <div id="botleft">
     <div id="hplabel">HEALTH</div>
     <div id="hpwrap"><div id="hpbar"></div></div>
@@ -280,7 +282,8 @@ let me={ id:null,name:"Player",color:0x7df0b0,hue:0.4,
   footY:0,vy:0,eyeH:1.6,onGround:true,
   stance:'stand',prone:false,slideT:0,slideDir:new THREE.Vector3(),
   wallNormal:null,wallRunCharge:0,wallRunning:false,wasWallRun:false,wallTilt:0,
-  lean:0,leanTarget:0,ads:false,inspectT:0 };
+  lean:0,leanTarget:0,ads:false,inspectT:0,spawnProtT:0 };
+const SPAWN_PROT=2.5; // seconds of invulnerability after spawning
 const players={};            // remote players
 const obstacles=[];          // AABB colliders
 const obstacleMeshes=[];     // meshes for bullet raycasts
@@ -894,7 +897,8 @@ function animateWalk(g, speed, dt){
 function makeAvatar(p){
   const g=buildHumanoid(p.color, true);
   const tag=makeTag(p.name,new THREE.Color(p.color)); tag.position.y=2.3; g.add(tag);
-  scene.add(g); p.group=g; p.tag=tag;
+  const shield=part(new THREE.SphereGeometry(0.6,16,12), new THREE.MeshBasicMaterial({color:0x55c8ff,transparent:true,opacity:0.16,depthWrite:false}),0,1.0,0); shield.visible=false; g.add(shield);
+  scene.add(g); p.group=g; p.tag=tag; p.shield=shield;
 }
 function makeTag(text,color){
   const cv=document.createElement('canvas'); cv.width=256; cv.height=64; const ctx=cv.getContext('2d');
@@ -1229,6 +1233,9 @@ function updateMovement(dt){
   applyCameraRot();
   // first-person body (visible looking down; scales with stance so it stays below the eye)
   if(meBody){ meBody.visible=true; meBody.position.set(me.pos.x,me.footY,me.pos.z); meBody.rotation.y=me.yaw; meBody.scale.y=clamp(me.eyeH/1.6,0.3,1.05); animateWalk(meBody, Math.hypot(me.vel.x,me.vel.z), dt); }
+  // spawn protection countdown
+  if(me.spawnProtT>0){ me.spawnProtT=Math.max(0,me.spawnProtT-dt); $("spawnprot").style.display='block'; $("spawnprot").textContent='🛡 SPAWN PROTECTED · '+me.spawnProtT.toFixed(1)+'s'; }
+  else $("spawnprot").style.display='none';
   // stance HUD
   $("stancetag").textContent = me.wallRunning?'WALL-RUNNING':me.stance==='slide'?'SLIDING':me.stance==='prone'?'PRONE':me.stance==='crouch'?'CROUCHING':(!me.onGround?'AIRBORNE':'STANDING');
   updateADS(dt);
@@ -1350,7 +1357,7 @@ function castRay(origin,dir,range){
 }
 function tryFire(now){
   if(!me.alive||WEAPON.reloading||matchOver) return;
-  me.inspectT=0;
+  me.inspectT=0; me.spawnProtT=0;   // firing ends spawn protection
   const interval=60000/WEAPON.rpm;
   if(now-WEAPON.lastShot<interval) return;
   if(WEAPON.melee){ WEAPON.lastShot=now; meleeSwing(now); return; }
@@ -1465,7 +1472,7 @@ function reload(){
 // ===========================================================================
 // DAMAGE / DEATH
 // ===========================================================================
-function takeDamage(dmg,byId){ if(!me.alive)return; me.hp-=dmg; updateHP(); hurtFlash(); SFX.hurt(); if(me.hp<=0) die(byId); }
+function takeDamage(dmg,byId){ if(!me.alive||me.spawnProtT>0)return; me.hp-=dmg; updateHP(); hurtFlash(); SFX.hurt(); if(me.hp<=0) die(byId); }
 function die(byId){
   me.alive=false; me.hp=0; updateHP(); me.deaths++; $("respawn").style.display='block';
   const bot = bots.find(x=>x.name===byId); if(bot) bot.kills++;
@@ -1477,7 +1484,7 @@ function die(byId){
 }
 function respawn(){
   me.pos.copy(spawnPoint()); me.footY=0; me.vy=0; me.vel.set(0,0,0); me.stance='stand'; me.prone=false;
-  me.alive=true; initLoadoutAmmo(); currentSlot='x'; equip('primary'); me.hp=MAXHP;
+  me.alive=true; initLoadoutAmmo(); currentSlot='x'; equip('primary'); me.hp=MAXHP; me.spawnProtT=SPAWN_PROT;
   updateHP(); $("respawn").style.display='none';
 }
 
@@ -1582,7 +1589,7 @@ function handleNetMsg(msg){
   switch(msg.t){
     case 'gameinfo': if(msg.map&&msg.map!==loadout.map) buildMap(msg.map); zombieMode=!!msg.zombie; if(msg.scoreLimit) scoreLimit=msg.scoreLimit; infiniteAmmo=!!msg.infAmmo; if(zombieMode)$("wavebox").style.display='block'; me.pos.copy(spawnPoint()); me.footY=0; break;
     case 'hello':{ const p=ensurePlayer(id,{name:msg.name,color:msg.color}); p.name=msg.name; p.color=msg.color; p.kills=msg.kills||p.kills; p.deaths=msg.deaths||p.deaths; if(p.tag){ p.group.remove(p.tag); p.tag=makeTag(p.name,new THREE.Color(p.color)); p.tag.position.y=2.3; p.group.add(p.tag);} refreshBoard(); break; }
-    case 'state':{ const p=ensurePlayer(id); p.tEye.set(msg.p[0],msg.p[1],msg.p[2]); p.tFoot=msg.f; p.tYaw=msg.y; p.tScaleY=msg.s; p.dead=!!msg.dead; p.last=performance.now(); break; }
+    case 'state':{ const p=ensurePlayer(id); p.tEye.set(msg.p[0],msg.p[1],msg.p[2]); p.tFoot=msg.f; p.tYaw=msg.y; p.tScaleY=msg.s; p.dead=!!msg.dead; p.prot=!!msg.prot; p.last=performance.now(); break; }
     case 'shot':{ const o=new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]); spawnTracer(o,new THREE.Vector3(msg.d[0],msg.d[1],msg.d[2]));
       const dist=o.distanceTo(me.pos); SFX.shot(msg.c||'rifle', false, clamp(1-dist/70,0.05,0.85)); break; }
     case 'hit': if(msg.target===me.id) takeDamage(msg.dmg,msg.by); break;
@@ -1594,7 +1601,7 @@ function handleNetMsg(msg){
   }
 }
 let lastStateSend=0;
-function netTick(now){ if(!net)return; if(now-lastStateSend>50){ lastStateSend=now; net.send({t:'state',p:[me.pos.x,me.pos.y,me.pos.z],f:me.footY,y:me.yaw,s:me.eyeH/1.6,dead:!me.alive}); } }
+function netTick(now){ if(!net)return; if(now-lastStateSend>50){ lastStateSend=now; net.send({t:'state',p:[me.pos.x,me.pos.y,me.pos.z],f:me.footY,y:me.yaw,s:me.eyeH/1.6,dead:!me.alive,prot:me.spawnProtT>0}); } }
 setInterval(()=>{ if(net&&started) sendHello(); },2500);
 
 // ---------- remote interpolation ----------
@@ -1605,6 +1612,7 @@ function updateRemotes(dt){
     p.eye.lerp(p.tEye,1-Math.pow(0.0001,dt*1.2)); p.foot=lerp(p.foot,p.tFoot,1-Math.pow(0.0001,dt*1.2));
     p.yaw=lerpAngle(p.yaw,p.tYaw,1-Math.pow(0.0001,dt*1.5)); p.scaleY=lerp(p.scaleY,p.tScaleY||1,0.2);
     p.group.position.set(p.eye.x,p.foot,p.eye.z); p.group.rotation.y=p.yaw; p.group.scale.y=clamp(p.scaleY,0.3,1.05); p.group.visible=!p.dead;
+    if(p.shield) p.shield.visible=!!p.prot;
     const sp=Math.hypot(p.eye.x-px,p.eye.z-pz)/Math.max(dt,0.001); animateWalk(p.group, sp, dt);
     if(nowp-p.last>8000) removePlayer(id);
   }
@@ -1701,7 +1709,7 @@ function beginGame(){
   me.pos.copy(spawnPoint()); me.footY=0; me.vy=0;
   if(meBody){ scene.remove(meBody); meBody.traverse(o=>{if(o.geometry)o.geometry.dispose();}); }
   meBody=buildHumanoid(me.color,false); meBody.visible=true; scene.add(meBody);
-  initLoadoutAmmo(); currentSlot='x'; equip('primary'); me.hp=MAXHP;
+  initLoadoutAmmo(); currentSlot='x'; equip('primary'); me.hp=MAXHP; me.spawnProtT=SPAWN_PROT;
   matchOver=false; me.elims=0;
   updateHP(); refreshBoard();
   $("pauseroom").textContent = net? ('Room code: '+net.code+'  ·  '+(zombieMode?'Zombie Survival':('First to '+scoreLimit))) : 'Offline';
