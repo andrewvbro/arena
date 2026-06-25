@@ -1023,28 +1023,42 @@ function spawnBot(name){
   const color=0xd0402f; const g=buildHumanoid(color,true); const tag=makeTag(name,new THREE.Color(color)); tag.position.y=2.3; g.add(tag); scene.add(g);
   const sp=spawnPointAway(me.pos);
   const b={group:g,name,color,hp:100,pos:sp.clone(),eye:sp.clone(),yaw:0,fireCd:rand(0.5,1.5),strafe:Math.random()<0.5?1:-1,strafeT:0,alive:true,kills:0,deaths:0,
-    footY:0,vy:0,onGround:true,stance:'stand',stanceT:rand(0.5,1.5),slideT:0,slideDir:new THREE.Vector3()};
+    footY:0,vy:0,onGround:true,stance:'stand',stanceT:rand(0.5,1.5),slideT:0,slideDir:new THREE.Vector3(),target:null,targetT:0};
   bots.push(b); return b;
 }
 function spawnBots(n){ const names=['CLAUDE','CLAUDE-2','CLAUDE-3','CLAUDE-4','CLAUDE-5','CLAUDE-6']; for(let i=0;i<n;i++) spawnBot(names[i]||('BOT-'+i)); refreshBoard(); }
 function botLOS(from,to){ const dir=new THREE.Vector3().subVectors(to,from); const dist=dir.length(); dir.normalize(); ray.set(from,dir); ray.far=dist; const oh=ray.intersectObjects(obstacleMeshes,false); return !(oh.length && oh[0].distance<dist-0.5); }
 function botBlock(p){ for(const o of obstacles){ if(o.max.y<0.4) continue; const minx=o.min.x-0.35,maxx=o.max.x+0.35,minz=o.min.z-0.35,maxz=o.max.z+0.35;
   if(p.x>minx&&p.x<maxx&&p.z>minz&&p.z<maxz){ const a=p.x-minx,b=maxx-p.x,c=p.z-minz,d=maxz-p.z,m=Math.min(a,b,c,d); if(m===a)p.x=minx; else if(m===b)p.x=maxx; else if(m===c)p.z=minz; else p.z=maxz; } } }
+// nearest enemy of bot b: the player OR another bot (free-for-all)
+function botPickTarget(b){
+  let best=null, bd=1e9;
+  if(me.alive){ const d=Math.hypot(me.pos.x-b.pos.x,me.pos.z-b.pos.z); best={kind:'me'}; bd=d; }
+  for(let j=0;j<bots.length;j++){ const o=bots[j]; if(o===b||!o.alive) continue; const d=Math.hypot(o.pos.x-b.pos.x,o.pos.z-b.pos.z); if(d<bd){ bd=d; best={kind:'bot',idx:j}; } }
+  return best;
+}
+function botTargetValid(t){ if(!t) return false; return t.kind==='me'? me.alive : (bots[t.idx]&&bots[t.idx].alive); }
 function updateBots(dt){
   for(const b of bots){ if(!b.alive) continue;
-    const toP=new THREE.Vector3(me.pos.x-b.pos.x,0,me.pos.z-b.pos.z); const dist=toP.length(); if(dist>0.01) toP.normalize();
-    b.yaw=Math.atan2(toP.x,toP.z);
+    // choose / refresh target (nearest enemy, re-pick on death or timer)
+    b.targetT-=dt;
+    if(!botTargetValid(b.target) || b.targetT<=0){ b.target=botPickTarget(b); b.targetT=rand(1.2,2.6); }
+    const t=b.target;
+    const tgtPos = t? (t.kind==='me'? me.pos : bots[t.idx].pos) : b.pos;
+    const tgtEye = t? (t.kind==='me'? camera.position : bots[t.idx].eye) : b.eye;
+    const hasTarget = botTargetValid(t);
+    const toP=new THREE.Vector3(tgtPos.x-b.pos.x,0,tgtPos.z-b.pos.z); const dist=toP.length(); if(dist>0.01) toP.normalize();
+    if(hasTarget) b.yaw=Math.atan2(toP.x,toP.z);
     // vertical (jumping)
     b.vy-=GRAV*dt; b.footY+=b.vy*dt; if(b.footY<=0){ b.footY=0; b.vy=0; b.onGround=true; } else b.onGround=false;
-    // strafe flip
     b.strafeT-=dt; if(b.strafeT<=0){ b.strafeT=rand(1,2.5); b.strafe*=-1; }
-    // pick a dodge behaviour (jump / slide / crouch / prone / stand)
+    // dodge behaviour
     b.stanceT-=dt;
     if(b.stanceT<=0 && b.onGround){
       const r=Math.random(); b.stanceT=rand(0.5,1.6);
       if(b.stance==='slide') b.stance='crouch';
-      else if(r<0.16 && dist<32){ b.vy=8.2; b.stance='stand'; }                         // jump
-      else if(r<0.30 && dist<26){ b.stance='slide'; b.slideT=0.5; b.slideDir.copy(toP).applyAxisAngle(UPV, b.strafe*1.2); }  // slide
+      else if(r<0.16 && dist<32){ b.vy=8.2; b.stance='stand'; }
+      else if(r<0.30 && dist<26){ b.stance='slide'; b.slideT=0.5; b.slideDir.copy(toP).applyAxisAngle(UPV, b.strafe*1.2); }
       else if(r<0.48) b.stance='crouch';
       else if(r<0.58) b.stance='prone';
       else b.stance='stand';
@@ -1052,35 +1066,42 @@ function updateBots(dt){
     // movement by stance
     let spd=4.6; const move=new THREE.Vector3();
     if(b.stance==='slide'){ b.slideT-=dt; if(b.slideT<=0) b.stance='crouch'; spd=9; move.copy(b.slideDir); }
-    else if(me.alive){ const range=13;
+    else if(hasTarget){ const range=13;
       if(dist>range+3) move.add(toP); else if(dist<range-3) move.sub(toP);
       move.add(new THREE.Vector3(toP.z,0,-toP.x).multiplyScalar(b.strafe*0.8));
       if(b.stance==='crouch') spd=2.6; else if(b.stance==='prone') spd=1.2;
     }
     if(move.lengthSq()>0){ move.normalize().multiplyScalar(spd*dt); b.pos.x+=move.x; b.pos.z+=move.z; }
     botBlock(b.pos); b.pos.x=clamp(b.pos.x,-ARENA+1,ARENA-1); b.pos.z=clamp(b.pos.z,-ARENA+1,ARENA-1);
-    // stance height — shrinks the bot's profile (and hitbox via b.eye)
     const eyeH = b.stance==='prone'?0.5 : (b.stance==='crouch'||b.stance==='slide')?0.95 : 1.6;
     b.eye.set(b.pos.x, b.footY+eyeH, b.pos.z);
     const bx=b.group.position.x, bz=b.group.position.z;
     b.group.position.set(b.pos.x,b.footY,b.pos.z); b.group.rotation.y=b.yaw; b.group.scale.y=clamp(eyeH/1.6,0.3,1.05);
     animateWalk(b.group, Math.hypot(b.pos.x-bx,b.pos.z-bz)/Math.max(dt,0.001), dt);
-    // shoot
+    // shoot the current target (player or another bot)
     b.fireCd-=dt;
-    if(me.alive && dist<60 && b.fireCd<=0 && botLOS(b.eye,camera.position)){
+    if(hasTarget && dist<60 && b.fireCd<=0 && botLOS(b.eye,tgtEye)){
       b.fireCd=rand(0.35,0.75);
       const mz=b.eye.clone().addScaledVector(toP,0.4);
-      const aim=camera.position.clone().add(new THREE.Vector3(rand(-1,1),rand(-1,1),rand(-1,1)).multiplyScalar(dist*0.02));
+      const aim=tgtEye.clone().add(new THREE.Vector3(rand(-1,1),rand(-1,1),rand(-1,1)).multiplyScalar(dist*0.02));
       spawnTracer(mz, new THREE.Vector3().subVectors(aim,mz).normalize());
-      SFX.shot('rifle', false, clamp(1-dist/70,0.1,0.7));
-      if(Math.random() < clamp(0.55-dist*0.006,0.12,0.5)) takeDamage(rand(8,16), b.name);
+      SFX.shot('rifle', false, clamp(1-Math.min(dist,b.pos.distanceTo(me.pos))/70,0.08,0.7));
+      if(Math.random() < clamp(0.55-dist*0.006,0.12,0.5)){
+        if(t.kind==='me') takeDamage(rand(8,16), b.name);
+        else applyBotDamage(t.idx, rand(10,20), false, b);   // bot vs bot
+      }
     }
   }
 }
 const UPV=new THREE.Vector3(0,1,0);
-function applyBotDamage(i,dmg,head){ const b=bots[i]; if(!b||!b.alive) return; b.hp-=dmg; flash(b.group,head); if(b.hp<=0) botDie(b); }
-function botDie(b){ b.alive=false; b.group.visible=false; b.deaths++; me.kills++; me.elims++; addKill(me.name,b.name); refreshBoard(); checkWin();
-  setTimeout(()=>{ if(!started)return; b.hp=100; b.alive=true; b.pos.copy(spawnPointAway(me.pos)); b.footY=0; b.vy=0; b.stance='stand'; b.group.scale.y=1; b.group.visible=true; }, 3000); }
+function applyBotDamage(i,dmg,head,killer){ const b=bots[i]; if(!b||!b.alive) return; b.hp-=dmg; flash(b.group,head); if(b.hp<=0) botDie(b, killer||'me'); }
+function botDie(b, killer){
+  b.alive=false; b.group.visible=false; b.deaths++; b.target=null;
+  if(killer==='me'){ me.kills++; me.elims++; addKill(me.name,b.name); checkWin(); }
+  else if(killer&&killer.name){ killer.kills++; addKill(killer.name,b.name); }
+  else addKill('the arena',b.name);
+  refreshBoard();
+  setTimeout(()=>{ if(!started)return; b.hp=100; b.alive=true; b.pos.copy(spawnPointAway(me.pos)); b.footY=0; b.vy=0; b.stance='stand'; b.target=null; b.group.scale.y=1; b.group.visible=true; }, 3000); }
 
 // ===========================================================================
 // AUDIO (procedural Web Audio — no asset files)
