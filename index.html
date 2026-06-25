@@ -294,7 +294,7 @@ let me={ id:null,name:"Player",color:0x7df0b0,hue:0.4,
   footY:0,vy:0,eyeH:1.6,onGround:true,
   stance:'stand',prone:false,slideT:0,slideDir:new THREE.Vector3(),
   wallNormal:null,wallRunCharge:0,wallRunning:false,wasWallRun:false,wallTilt:0,lastWallN:null,
-  lean:0,leanTarget:0,ads:false,inspectT:0,spawnProtT:0,jumps:0,dashCd:0,
+  lean:0,leanTarget:0,ads:false,inspectT:0,spawnProtT:0,jumps:0,dashCd:0,jumpBuffer:0,
   spinWindow:0,prevYaw:0,adsStartT:0,shotTags:null };
 const SPAWN_PROT=2.5; // seconds of invulnerability after spawning
 const DASH_SPEED=15, DASH_CD=1.1;
@@ -1308,6 +1308,7 @@ function initInput(){
     if(e.code==='Digit1') equip('primary');
     if(e.code==='Digit2') equip('secondary');
     if(e.code==='Digit3') equip('knife');
+    if(e.code==='Space') me.jumpBuffer=0.15;   // buffer the press so jumps/wall-jumps are forgiving
     if((e.code==='ControlLeft'||e.code==='KeyC')) tryStartSlide();
     // dash / dodge — double-tap a movement key
     if(['KeyW','KeyA','KeyS','KeyD'].includes(e.code)){
@@ -1415,14 +1416,11 @@ function updateMovement(dt){
   me.vy-=GRAV*dt;
   if(me.onGround){ me.wallRunCharge=WALLRUN_TIME; me.jumps=0; me.lastWallN=null; }
   if(me.dashCd>0) me.dashCd-=dt;
-  if(keys['Space']){
-    if(me.onGround && me.stance!=='prone'){
-      me.vy=JUMP; me.onGround=false; me.jumps=1;
-      if(me.stance==='slide'){ me.vel.x=me.slideDir.x*12; me.vel.z=me.slideDir.z*12; me.stance='stand'; }  // slide-jump launch
-      keys['Space']=false;
-    } else if(!me.onGround && !me.wallRunning && me.jumps<2){
-      me.vy=JUMP*0.92; me.jumps=(me.jumps<1?1:me.jumps)+1; SFX.swish(); keys['Space']=false;             // double jump
-    }
+  if(me.jumpBuffer>0) me.jumpBuffer-=dt;
+  // ground jump (slide-jump launches forward). Wall-jump + double-jump are handled AFTER wall detection.
+  if(me.jumpBuffer>0 && me.onGround && me.stance!=='prone'){
+    me.vy=JUMP; me.onGround=false; me.jumps=1; me.jumpBuffer=0;
+    if(me.stance==='slide'){ me.vel.x=me.slideDir.x*12; me.vel.z=me.slideDir.z*12; me.stance='stand'; }
   }
   // integrate horizontal (sets wallNormal on contact)
   const prevFoot=me.footY;
@@ -1444,11 +1442,13 @@ function updateMovement(dt){
       const run=Math.max(hSpeed,7.5);
       me.vel.x=tan.x*run - n.x*2.2; me.vel.z=tan.z*run - n.z*2.2; // run along + hug wall
       const side=(right.x*n.x+right.z*n.z); tiltTarget = side>0? 0.17 : -0.17;
-      if(keys['Space']){ me.vy=JUMP*1.02; me.vel.x+=n.x*9; me.vel.z+=n.z*9; me.wallRunning=false; me.wallRunCharge=0; me.jumps=1; keys['Space']=false; }
+      if(me.jumpBuffer>0){ me.vy=JUMP*1.15; me.vel.x+=n.x*10; me.vel.z+=n.z*10; me.wallRunning=false; me.wallRunCharge=0; me.jumps=1; me.jumpBuffer=0; SFX.swish(); }   // kick off the wall
     }
   }
   me.wasWallRun=me.wallRunning;
   me.wallTilt=lerp(me.wallTilt,tiltTarget,1-Math.pow(0.0001,dt*0.8));
+  // double jump — AFTER wall logic so a wall-jump always takes priority
+  if(me.jumpBuffer>0 && !me.onGround && !me.wallRunning && me.jumps<2){ me.vy=JUMP*0.92; me.jumps=(me.jumps<1?1:me.jumps)+1; SFX.swish(); me.jumpBuffer=0; }
   // vertical
   me.footY+=me.vy*dt;
   const ground=groundUnder(me.pos.x,me.pos.z,prevFoot);
