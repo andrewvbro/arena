@@ -1811,6 +1811,7 @@ function checkWin(){
 function startKillCam(focus, banner, then){
   killCam={t:0, dur:4.2, focus:focus.clone(), then};
   if(meBody) meBody.visible=true;
+  if(vm) vm.visible=false;   // hide the held gun during the cinematic
   $("killbanner").innerHTML=banner; $("killbanner").style.display='block'; $("cinebars").style.display='block';
   $("hud").querySelectorAll('#crosshair,#botleft,#botright,#killfeed,#scopeOverlay').forEach(e=>e.style.visibility='hidden');
 }
@@ -1820,6 +1821,7 @@ function updateKillCam(dt){
   camera.up.set(0,1,0); camera.lookAt(f.x, f.y+0.5, f.z);
   camera.fov=lerp(camera.fov,44,0.12); camera.updateProjectionMatrix();
   if(killCam.t>=killCam.dur){ const then=killCam.then; killCam=null;
+    if(vm) vm.visible=true;
     $("killbanner").style.display='none'; $("cinebars").style.display='none';
     $("hud").querySelectorAll('#crosshair,#botleft,#botright,#killfeed,#scopeOverlay').forEach(e=>e.style.visibility='');
     if(then) then(); }
