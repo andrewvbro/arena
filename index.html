@@ -1391,7 +1391,12 @@ function horizontalBlock(pos,footY){
       else {pos.z=maxz; me.wallNormal=new THREE.Vector3(0,0,1);}
     }
   }
-  pos.x=clamp(pos.x,-ARENA+PR+0.6,ARENA-PR-0.6); pos.z=clamp(pos.z,-ARENA+PR+0.6,ARENA-PR-0.6);
+  // arena bounds — register the border as a wall (inward normal) so you can wall-run it
+  const lo=-ARENA+PR+0.4, hi=ARENA-PR-0.4;
+  if(pos.x<lo){ pos.x=lo; if(!me.wallNormal) me.wallNormal=new THREE.Vector3(1,0,0); }
+  else if(pos.x>hi){ pos.x=hi; if(!me.wallNormal) me.wallNormal=new THREE.Vector3(-1,0,0); }
+  if(pos.z<lo){ pos.z=lo; if(!me.wallNormal) me.wallNormal=new THREE.Vector3(0,0,1); }
+  else if(pos.z>hi){ pos.z=hi; if(!me.wallNormal) me.wallNormal=new THREE.Vector3(0,0,-1); }
 }
 let vmBob=0,recoil=0;
 function applyCameraRot(){
