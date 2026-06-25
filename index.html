@@ -1471,7 +1471,10 @@ function updateMovement(dt){
   camera.position.copy(me.pos).addScaledVector(right,me.lean*0.5);
   applyCameraRot();
   // first-person body (visible looking down; scales with stance so it stays below the eye)
-  if(meBody){ meBody.visible=true; meBody.position.set(me.pos.x,me.footY,me.pos.z); meBody.rotation.y=me.yaw; animateWalk(meBody, Math.hypot(me.vel.x,me.vel.z), dt); poseHumanoid(meBody, me.stance, me.footY); }
+  if(meBody){
+    if(me.stance==='prone'){ meBody.visible=false; }   // own prone body would fill the low camera view
+    else { meBody.visible=true; meBody.position.set(me.pos.x,me.footY,me.pos.z); meBody.rotation.y=me.yaw; animateWalk(meBody, Math.hypot(me.vel.x,me.vel.z), dt); poseHumanoid(meBody, me.stance, me.footY); }
+  }
   // spawn protection countdown
   if(me.spawnProtT>0){ me.spawnProtT=Math.max(0,me.spawnProtT-dt); $("spawnprot").style.display='block'; $("spawnprot").textContent='🛡 SPAWN PROTECTED · '+me.spawnProtT.toFixed(1)+'s'; }
   else $("spawnprot").style.display='none';
