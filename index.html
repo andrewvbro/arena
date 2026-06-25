@@ -61,6 +61,7 @@
   .kf b{ color:#7df0b0;} .kf .vic{ color:#ff8e8e;}
 
   #wavebox{ position:absolute; left:50%; top:16px; transform:translateX(-50%); text-align:center; display:none; background:rgba(8,12,18,.65); border:1px solid rgba(120,200,120,.3); padding:7px 18px; border-radius:8px;}
+  #runtimer{ position:absolute; left:50%; top:16px; transform:translateX(-50%); display:none; background:rgba(8,12,18,.7); border:1px solid rgba(120,180,230,.35); padding:7px 20px; border-radius:8px; font-size:22px; font-weight:700; letter-spacing:.06em; color:#bfe3ff; font-variant-numeric:tabular-nums; text-shadow:0 2px 8px #000;}
   #wavebox .w{ font-size:20px; font-weight:700; color:#9be37a; letter-spacing:.1em;}
   #wavebox .z{ font-size:12px; color:#aebfce; }
 
@@ -185,6 +186,7 @@
   <div id="hitmarker"><div class="v"></div><div class="h"></div></div>
   <div id="killfeed"></div>
   <div id="wavebox"><div class="w">WAVE 1</div><div class="z">Zombies: 0</div></div>
+  <div id="runtimer"></div>
   <div id="toast"></div>
   <div id="spawnprot">🛡 SPAWN PROTECTED</div>
   <div id="hidden">🍃 HIDDEN</div>
@@ -299,6 +301,7 @@ let me={ id:null,name:"Player",color:0x7df0b0,hue:0.4,
 const SPAWN_PROT=2.5; // seconds of invulnerability after spawning
 const DASH_SPEED=15, DASH_CD=1.1;
 const hideSpots=[]; let VOIDY=-1000;   // prone-in-rock hide spots; fall-death level
+let PARKOUR_FINISH=null, runStart=0, runFinished=false, bestRun=0;   // speedrun course
 const players={};            // remote players
 const obstacles=[];          // AABB colliders
 const obstacleMeshes=[];     // meshes for bullet raycasts
@@ -543,7 +546,7 @@ const MAPS=[
  {id:'snowyard',name:'Snowyard',desc:'Containers in snow',c1:'#9fb0bc',c2:'#6a7682',size:40,bg:0x2a3340,fog:[45,120],ground:0xc6d2dc},
  {id:'metropolis',name:'Metropolis',desc:'HUGE city — fight on the rooftops, falling = death',c1:'#4a505c',c2:'#5c5246',size:92,bg:0x10141c,fog:[80,260],ground:0x2c3038,void:8},
  {id:'overlord',name:'Operation Overlord',desc:'D-Day beach landing',c1:'#8a7a52',c2:'#5a5550',size:48,bg:0x6a7480,fog:[55,170],ground:0xb6a472},
- {id:'parkour',name:'Parkour',desc:'Movement playground — wall-run, dash & climb',c1:'#5a6470',c2:'#3a4250',size:36,bg:0x1a2230,fog:[45,150],ground:0x222a34},
+ {id:'parkour',name:'Parkour Run',desc:'Speedrun course over a void — miss a jump = death',c1:'#5a6470',c2:'#3a4250',size:38,bg:0x161d28,fog:[50,170],ground:0x1a2028,void:3},
 ];
 function mapById(id){ return MAPS.find(m=>m.id===id)||MAPS[0]; }
 
@@ -573,6 +576,7 @@ function hedgehog(x,z){ const m=new THREE.MeshStandardMaterial({color:0x55585c,r
 function buildMap(id){
   const M=mapById(id); loadout.map=id; ARENA=M.size;
   VOIDY = M.void!=null ? M.void : -1000;   // fall below this = death (only set on rooftop-style maps)
+  PARKOUR_FINISH=null;
   clearMap();
   scene.background=new THREE.Color(M.bg);
   scene.fog=new THREE.Fog(M.bg,M.fog[0],M.fog[1]);
@@ -675,26 +679,25 @@ function buildMap(id){
     for(let x=-30;x<=30;x+=12){ S(x,-ARENA+13); }
     S(-24,38); S(0,40); S(24,38); S(-12,34); S(12,34);
   } else if(id==='parkour'){
-    // ascending stepping platforms (square columns) toward a central tower
-    const cols=[
-      [-28,-28,6,2.5],[-20,-26,5,4.5],[-10,-28,5,6.5],[0,-26,5,8.5],[10,-28,5,10],[20,-26,5,8],[28,-22,6,4],
-      [28,-8,6,6],[24,2,5,9],[16,8,5,12],[8,2,6,14],
-      [0,0,8,18],
-      [-8,4,6,14],[-18,2,5,11],[-26,4,6,7],
-      [-24,16,5,5],[-14,22,5,8],[-2,18,6,11],[10,22,5,8],[22,16,6,5] ];
-    for(const c of cols){ const m=B(c[2],c[3],c[2],(c[3]>10)?c2:c1, c[0],c[3]/2,c[1]);
-      // a thin rim/parapet on top of bigger platforms = cover
-      if(c[2]>=6){ B(c[2],0.5,0.35,c2,c[0],c[3]+0.25,c[1]-c[2]/2+0.2); B(c[2],0.5,0.35,c2,c[0],c[3]+0.25,c[1]+c[2]/2-0.2); } }
-    // tall wall-run walls bridging the bigger gaps & heights (run along them between platforms)
-    const walls=[[-15,-20,0.8,9,10],[5,-19,0.8,9,10],[22,-3,9,9,0.8],[12,8,0.8,10,9],[-13,8,0.8,10,9],[-21,11,9,9,0.8],[4,20,0.8,9,9],[-8,20,9,9,0.8]];
-    for(const w of walls){ B(w[2],w[3],w[4],0x46505c, w[0],w[3]/2,w[1]); }
-    // thin beam shortcuts up high
-    B(2,0.4,9,0x5a4632,-8,14,9); B(9,0.4,2,0x5a4632,4,16,4); B(2,0.4,8,0x5a4632,18,12,12);
-    // floating AC-unit cover on the central tower + ground cover for fights
-    B(2,1.3,2,0x3a4048,0,18.65,0);
-    for(let i=0;i<6;i++){ B(2,1.4,2,0x55504a,rand(-26,26),0.7,rand(-26,26)); }
-    // spawns: low start platforms around the ring + the ground
-    S(-28,-28,2.5); S(20,-26,8); S(28,-22,4); S(-26,4,7); S(22,16,5); S(-24,16,5); S(10,22,8); S(0,-26,8.5);
+    // LONG speedrun course over a deadly void — hop / wall-run / dash from START to FINISH
+    const path=[
+      [-32,-32,7,5],                                                         // 0 START
+      [-25,-31,5,5.5],[-18,-32,4.5,6],[-11,-30,4,6.5],[-4,-32,4,7],[3,-30,4,7.5],[10,-32,4,8],[17,-30,4,8.5],[24,-32,4.5,9],[31,-30,5,9.5],
+      [33,-21,4.5,10],[31,-13,4,10.5],[34,-5,4,11.5],                        // up the +X side
+      [28,3,4.5,12],[21,6,4,12.5],[14,4,4,13],[7,7,4,13.5],[0,4,4,14],
+      [-7,8,4,14.5],[-14,5,4,15],[-21,8,4,15.5],[-28,5,4.5,16],[-34,8,4,16.5],
+      [-30,-1,4,17],[-22,-4,4,17.5],[-14,-1,4,18],[-6,-5,4,18.5],[2,-2,4,19],
+      [6,7,8,20] ];                                                          // FINISH
+    for(let i=0;i<path.length;i++){ const p=path[i], big=(i===0||i===path.length-1);
+      B(p[2],p[3],p[2], big?(i===0?0x2a6a8a:0x2a8a4a):c1, p[0],p[3]/2,p[1]);
+      if(big) B(p[2]+0.6,0.3,p[2]+0.6, i===0?0x3a8acc:0x3aca5a, p[0],p[3]+0.15,p[1]); }
+    // optional wall-run walls bridging two of the bigger gaps
+    B(0.8,9,11,0x46505c, 34,9,-9); B(11,9,0.8,0x46505c, 14,13,8);
+    // finish marker beacon
+    const fin=path[path.length-1]; B(0.5,4,0.5,0x4aff8a, fin[0],fin[3]+2,fin[1]);
+    PARKOUR_FINISH={x:fin[0],z:fin[1],y:fin[3],r:4.5};
+    // spawns: all clustered at the START platform
+    S(-32,-32,5); S(-34,-32,5); S(-32,-34,5); S(-30,-32,5);
   }
   // spawns: ring near edges (unless the map already defined its own)
   if(SPAWNS.length===0){ const r=ARENA-4;
@@ -1785,6 +1788,7 @@ function die(byId){
 function respawn(){
   { const sp=spawnPoint(); me.pos.copy(sp); me.footY=sp.y-1.6; } me.vy=0; me.vel.set(0,0,0); me.stance='stand'; me.prone=false;
   me.alive=true; initLoadoutAmmo(); currentSlot='x'; equip('primary'); me.hp=MAXHP; me.spawnProtT=SPAWN_PROT;
+  resetRun();
   updateHP(); $("respawn").style.display='none';
 }
 
@@ -1923,6 +1927,23 @@ function lerpAngle(a,b,t){ let d=((b-a+Math.PI)%(Math.PI*2))-Math.PI; if(d<-Math
 // ===========================================================================
 // LOOP
 // ===========================================================================
+// speedrun timer for the Parkour course
+function updateParkourTimer(){
+  const rt=$("runtimer");
+  if(!PARKOUR_FINISH){ rt.style.display='none'; return; }
+  rt.style.display='block';
+  if(runFinished) return;
+  if(!me.alive){ rt.textContent='⏱ —'; return; }
+  const t=(performance.now()-runStart)/1000;
+  const d=Math.hypot(me.pos.x-PARKOUR_FINISH.x, me.pos.z-PARKOUR_FINISH.z);
+  if(d<PARKOUR_FINISH.r && me.footY>PARKOUR_FINISH.y-2){
+    runFinished=true; const best=!bestRun||t<bestRun; if(best) bestRun=t;
+    rt.innerHTML='🏁 '+t.toFixed(2)+'s'+(best?' · NEW BEST!':' · best '+bestRun.toFixed(2)+'s');
+    rt.style.color=best?'#7dff9e':'#bfe3ff'; toast('🏁 FINISH '+t.toFixed(2)+'s'); return;
+  }
+  rt.style.color='#bfe3ff'; rt.textContent='⏱ '+t.toFixed(2)+'s';
+}
+function resetRun(){ if(PARKOUR_FINISH){ runStart=performance.now(); runFinished=false; } }
 function animate(){
   requestAnimationFrame(animate);
   const dt=Math.min(clock.getDelta(),0.05); const now=performance.now();
@@ -1932,6 +1953,7 @@ function animate(){
     if(zombieMode) updateZombies(dt);
     if(bots.length) updateBots(dt);
     for(const d of dummies){ if(!d.dead){ d.t+=dt; d.group.position.x+=Math.sin(d.t*0.8)*0.004; } }
+    updateParkourTimer();
     netTick(now);
   }
   renderer.render(scene,camera);
@@ -2024,7 +2046,7 @@ function beginGame(){
   if(meBody){ scene.remove(meBody); meBody.traverse(o=>{if(o.geometry)o.geometry.dispose();}); }
   meBody=buildHumanoid(me.color,false); meBody.visible=true; scene.add(meBody);
   initLoadoutAmmo(); currentSlot='x'; equip('primary'); me.hp=MAXHP; me.spawnProtT=SPAWN_PROT;
-  matchOver=false; me.elims=0;
+  matchOver=false; me.elims=0; resetRun();
   updateHP(); refreshBoard();
   $("pauseroom").textContent = net? ('Room code: '+net.code+'  ·  '+(zombieMode?'Zombie Survival':('First to '+scoreLimit))) : 'Offline';
   renderer.domElement.requestPointerLock();
