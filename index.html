@@ -254,7 +254,7 @@
     <div id="status"></div>
     <div class="hint">
       <kbd>WASD</kbd> move · <kbd>Mouse</kbd> look · <kbd>L-Click</kbd> fire · <kbd>R-Click</kbd> aim · <kbd>R</kbd> reload · <kbd>1/2/3</kbd> primary/secondary/knife<br>
-      <kbd>Space</kbd> jump (× <b>double-jump</b>) · double-tap <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to <b>dash</b> · <kbd>Shift</kbd> sprint · wall-run · <kbd>Ctrl</kbd> crouch/slide (jump out of a slide to launch) · <kbd>Z</kbd> prone · <kbd>Q</kbd>/<kbd>E</kbd> peek · <kbd>F</kbd> inspect · <kbd>Tab</kbd> scores
+      <kbd>Space</kbd> jump (× <b>double-jump</b>) · <kbd>Tab</kbd> (or double-tap <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>) to <b>dash</b> · <kbd>Shift</kbd> sprint · wall-run · <kbd>Ctrl</kbd> crouch/slide · <kbd>Z</kbd> prone · <kbd>Q</kbd>/<kbd>E</kbd> peek · <kbd>F</kbd> inspect · <kbd>B</kbd> scores
     </div>
   </div>
 </div>
@@ -1316,9 +1316,10 @@ function initInput(){
       if(lastTap[e.code] && tnow-lastTap[e.code]<280) tryDash(e.code);
       lastTap[e.code]=tnow;
     }
-    if(e.code==='Tab') $("board").style.display='block';
+    if(e.code==='Tab') tryDashCurrent();                       // Tab = dash
+    if(e.code==='KeyB') $("board").style.display='block';      // B = scoreboard
   });
-  document.addEventListener('keyup',e=>{ keys[e.code]=false; if(e.code==='Tab') $("board").style.display='none'; });
+  document.addEventListener('keyup',e=>{ keys[e.code]=false; if(e.code==='KeyB') $("board").style.display='none'; });
   renderer.domElement.addEventListener('click',()=>{ SFX.resume(); if(started&&!pointerLocked&&!matchOver) renderer.domElement.requestPointerLock(); });
   document.addEventListener('pointerlockchange',()=>{ pointerLocked=(document.pointerLockElement===renderer.domElement);
     if(started&&!matchOver) $("pause").style.display = pointerLocked?'none':'flex'; });
@@ -1339,16 +1340,27 @@ function tryStartSlide(){
   }
 }
 const lastTap={};
-function tryDash(code){
+function doDash(d){
   if(!started||!me.alive||matchOver||me.dashCd>0||me.stance==='prone') return;
-  const fwd=new THREE.Vector3(-Math.sin(me.yaw),0,-Math.cos(me.yaw));
-  const right=new THREE.Vector3(Math.cos(me.yaw),0,-Math.sin(me.yaw));
-  const d=new THREE.Vector3();
-  if(code==='KeyW')d.add(fwd); else if(code==='KeyS')d.sub(fwd); else if(code==='KeyD')d.add(right); else d.sub(right);
   d.normalize();
   me.vel.x=d.x*DASH_SPEED; me.vel.z=d.z*DASH_SPEED; me.dashCd=DASH_CD;
   if(!me.onGround) me.vy=Math.max(me.vy,1.5);   // slight lift on air-dash
   SFX.swish();
+}
+function tryDash(code){
+  const fwd=new THREE.Vector3(-Math.sin(me.yaw),0,-Math.cos(me.yaw));
+  const right=new THREE.Vector3(Math.cos(me.yaw),0,-Math.sin(me.yaw));
+  const d=new THREE.Vector3();
+  if(code==='KeyW')d.add(fwd); else if(code==='KeyS')d.sub(fwd); else if(code==='KeyD')d.add(right); else d.sub(right);
+  doDash(d);
+}
+function tryDashCurrent(){   // dash in the current movement direction (or forward if standing still)
+  const fwd=new THREE.Vector3(-Math.sin(me.yaw),0,-Math.cos(me.yaw));
+  const right=new THREE.Vector3(Math.cos(me.yaw),0,-Math.sin(me.yaw));
+  const d=new THREE.Vector3();
+  if(keys['KeyW'])d.add(fwd); if(keys['KeyS'])d.sub(fwd); if(keys['KeyD'])d.add(right); if(keys['KeyA'])d.sub(right);
+  if(d.lengthSq()<0.01) d.copy(fwd);
+  doDash(d);
 }
 
 // ===========================================================================
