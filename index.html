@@ -1433,7 +1433,7 @@ function updateMovement(dt){
   let tiltTarget=0;
   me.wallRunning=false;
   if(!me.onGround && me.wallNormal && me.wallRunCharge>0 && hSpeed>4.5 && wantRun && me.vy<7){
-    me.wallRunning=true; me.wallRunCharge-=dt;
+    me.wallRunning=true; me.wallRunCharge-=dt; me.jumps=0;   // wall-run refreshes your air-jumps
     if(!me.wasWallRun) me.vy=Math.max(me.vy,3.0);          // little hop onto the wall
     me.vy += GRAV*0.82*dt;                                  // cancel most gravity → glide along
     const n=me.wallNormal; const tan=new THREE.Vector3(-n.z,0,n.x);
@@ -1441,7 +1441,7 @@ function updateMovement(dt){
     const run=Math.max(hSpeed,7.5);
     me.vel.x=tan.x*run - n.x*2.2; me.vel.z=tan.z*run - n.z*2.2; // run along + hug wall
     const side=(right.x*n.x+right.z*n.z); tiltTarget = side>0? 0.17 : -0.17;
-    if(keys['Space']){ me.vy=JUMP*1.02; me.vel.x+=n.x*9; me.vel.z+=n.z*9; me.wallRunning=false; me.wallRunCharge=0; keys['Space']=false; }
+    if(keys['Space']){ me.vy=JUMP*1.02; me.vel.x+=n.x*9; me.vel.z+=n.z*9; me.wallRunning=false; me.wallRunCharge=0; me.jumps=1; keys['Space']=false; }
   }
   me.wasWallRun=me.wallRunning;
   me.wallTilt=lerp(me.wallTilt,tiltTarget,1-Math.pow(0.0001,dt*0.8));
