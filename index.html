@@ -246,7 +246,7 @@
     <div id="status"></div>
     <div class="hint">
       <kbd>WASD</kbd> move · <kbd>Mouse</kbd> look · <kbd>L-Click</kbd> fire · <kbd>R-Click</kbd> aim · <kbd>R</kbd> reload · <kbd>1/2/3</kbd> primary/secondary/knife<br>
-      <kbd>Space</kbd> jump · <kbd>Shift</kbd> sprint · run into a wall mid-air to <b>wall-run</b> · <kbd>Ctrl</kbd> crouch / slide · <kbd>Z</kbd> prone · <kbd>Q</kbd>/<kbd>E</kbd> peek · <kbd>F</kbd> inspect · <kbd>Tab</kbd> scores
+      <kbd>Space</kbd> jump (× <b>double-jump</b>) · double-tap <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to <b>dash</b> · <kbd>Shift</kbd> sprint · wall-run · <kbd>Ctrl</kbd> crouch/slide (jump out of a slide to launch) · <kbd>Z</kbd> prone · <kbd>Q</kbd>/<kbd>E</kbd> peek · <kbd>F</kbd> inspect · <kbd>Tab</kbd> scores
     </div>
   </div>
 </div>
@@ -286,8 +286,9 @@ let me={ id:null,name:"Player",color:0x7df0b0,hue:0.4,
   footY:0,vy:0,eyeH:1.6,onGround:true,
   stance:'stand',prone:false,slideT:0,slideDir:new THREE.Vector3(),
   wallNormal:null,wallRunCharge:0,wallRunning:false,wasWallRun:false,wallTilt:0,
-  lean:0,leanTarget:0,ads:false,inspectT:0,spawnProtT:0 };
+  lean:0,leanTarget:0,ads:false,inspectT:0,spawnProtT:0,jumps:0,dashCd:0 };
 const SPAWN_PROT=2.5; // seconds of invulnerability after spawning
+const DASH_SPEED=15, DASH_CD=1.1;
 const players={};            // remote players
 const obstacles=[];          // AABB colliders
 const obstacleMeshes=[];     // meshes for bullet raycasts
@@ -1162,6 +1163,12 @@ function initInput(){
     if(e.code==='Digit2') equip('secondary');
     if(e.code==='Digit3') equip('knife');
     if((e.code==='ControlLeft'||e.code==='KeyC')) tryStartSlide();
+    // dash / dodge — double-tap a movement key
+    if(['KeyW','KeyA','KeyS','KeyD'].includes(e.code)){
+      const tnow=performance.now();
+      if(lastTap[e.code] && tnow-lastTap[e.code]<280) tryDash(e.code);
+      lastTap[e.code]=tnow;
+    }
     if(e.code==='Tab') $("board").style.display='block';
   });
   document.addEventListener('keyup',e=>{ keys[e.code]=false; if(e.code==='Tab') $("board").style.display='none'; });
@@ -1183,6 +1190,18 @@ function tryStartSlide(){
   if(sprinting&&moving&&me.onGround&&me.stance==='stand'&&!me.prone){
     me.stance='slide'; me.slideT=0.55; me.slideDir.set(me.vel.x,0,me.vel.z).normalize();
   }
+}
+const lastTap={};
+function tryDash(code){
+  if(!started||!me.alive||matchOver||me.dashCd>0||me.stance==='prone') return;
+  const fwd=new THREE.Vector3(-Math.sin(me.yaw),0,-Math.cos(me.yaw));
+  const right=new THREE.Vector3(Math.cos(me.yaw),0,-Math.sin(me.yaw));
+  const d=new THREE.Vector3();
+  if(code==='KeyW')d.add(fwd); else if(code==='KeyS')d.sub(fwd); else if(code==='KeyD')d.add(right); else d.sub(right);
+  d.normalize();
+  me.vel.x=d.x*DASH_SPEED; me.vel.z=d.z*DASH_SPEED; me.dashCd=DASH_CD;
+  if(!me.onGround) me.vy=Math.max(me.vy,1.5);   // slight lift on air-dash
+  SFX.swish();
 }
 
 // ===========================================================================
@@ -1246,10 +1265,19 @@ function updateMovement(dt){
   const tvx=wish.x*speed, tvz=wish.z*speed;
   const accel=me.onGround?(me.stance==='slide'?0.06:(1-Math.pow(0.0001,dt))):0.12;
   me.vel.x=lerp(me.vel.x,tvx,accel); me.vel.z=lerp(me.vel.z,tvz,accel);
-  // gravity + ground jump
+  // gravity + jumps (ground jump, double jump, slide-jump launch)
   me.vy-=GRAV*dt;
-  if(me.onGround) me.wallRunCharge=WALLRUN_TIME;
-  if(keys['Space'] && me.onGround && me.stance!=='prone'){ me.vy=JUMP; me.onGround=false; if(me.stance==='slide')me.stance='stand'; keys['Space']=false; }
+  if(me.onGround){ me.wallRunCharge=WALLRUN_TIME; me.jumps=0; }
+  if(me.dashCd>0) me.dashCd-=dt;
+  if(keys['Space']){
+    if(me.onGround && me.stance!=='prone'){
+      me.vy=JUMP; me.onGround=false; me.jumps=1;
+      if(me.stance==='slide'){ me.vel.x=me.slideDir.x*12; me.vel.z=me.slideDir.z*12; me.stance='stand'; }  // slide-jump launch
+      keys['Space']=false;
+    } else if(!me.onGround && !me.wallRunning && me.jumps<2){
+      me.vy=JUMP*0.92; me.jumps=(me.jumps<1?1:me.jumps)+1; SFX.swish(); keys['Space']=false;             // double jump
+    }
+  }
   // integrate horizontal (sets wallNormal on contact)
   const prevFoot=me.footY;
   me.pos.x+=me.vel.x*dt; me.pos.z+=me.vel.z*dt; horizontalBlock(me.pos,me.footY);
