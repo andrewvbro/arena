@@ -62,6 +62,11 @@
 
   #wavebox{ position:absolute; left:50%; top:16px; transform:translateX(-50%); text-align:center; display:none; background:rgba(8,12,18,.65); border:1px solid rgba(120,200,120,.3); padding:7px 18px; border-radius:8px;}
   #runtimer{ position:absolute; left:50%; top:16px; transform:translateX(-50%); display:none; background:rgba(8,12,18,.7); border:1px solid rgba(120,180,230,.35); padding:7px 20px; border-radius:8px; font-size:22px; font-weight:700; letter-spacing:.06em; color:#bfe3ff; font-variant-numeric:tabular-nums; text-shadow:0 2px 8px #000;}
+  #cinebars{ position:absolute; inset:0; display:none; pointer-events:none; }
+  #cinebars::before,#cinebars::after{ content:''; position:absolute; left:0; right:0; height:11%; background:#000; }
+  #cinebars::before{ top:0; } #cinebars::after{ bottom:0; }
+  #killbanner{ position:absolute; left:50%; top:13%; transform:translateX(-50%); display:none; text-align:center; color:#ffd23f; font-size:40px; font-weight:800; letter-spacing:.1em; text-shadow:0 3px 16px #000,0 0 22px rgba(255,180,40,.5); }
+  #killbanner span{ display:block; font-size:18px; color:#e8eef5; letter-spacing:.12em; margin-top:8px; font-weight:600; }
   #wavebox .w{ font-size:20px; font-weight:700; color:#9be37a; letter-spacing:.1em;}
   #wavebox .z{ font-size:12px; color:#aebfce; }
 
@@ -187,6 +192,8 @@
   <div id="killfeed"></div>
   <div id="wavebox"><div class="w">WAVE 1</div><div class="z">Zombies: 0</div></div>
   <div id="runtimer"></div>
+  <div id="cinebars"></div>
+  <div id="killbanner"></div>
   <div id="toast"></div>
   <div id="spawnprot">🛡 SPAWN PROTECTED</div>
   <div id="hidden">🍃 HIDDEN</div>
@@ -309,6 +316,7 @@ const dummies=[];            // practice targets (PvP)
 const zombies=[];            // zombie entities
 let net=null;
 let started=false, zombieMode=false, matchOver=false, scoreLimit=30, infiniteAmmo=false, MAXHP=100;
+let killCam=null, lastKillScene=null;   // final kill cam
 const INSPECT_DUR=1.9;
 const clock=new THREE.Clock();
 let ARENA=30, SPAWNS=[[0,0]];
@@ -1276,7 +1284,8 @@ function announceKill(){
 }
 function botDie(b, killer){
   b.alive=false; b.group.visible=false; b.deaths++; b.target=null;
-  if(killer==='me'){ me.kills++; me.elims++; addKill(me.name,b.name); announceKill(); checkWin(); }
+  if(killer==='me'){ me.kills++; me.elims++; addKill(me.name,b.name); announceKill();
+    lastKillScene={victim:new THREE.Vector3(b.pos.x,b.footY+0.8,b.pos.z), weapon:WEAPON.name, t:performance.now()}; checkWin(); }
   else if(killer&&killer.name){ killer.kills++; addKill(killer.name,b.name); }
   else addKill('the arena',b.name);
   refreshBoard();
@@ -1799,17 +1808,40 @@ function checkWin(){
   if(zombieMode||matchOver) return;
   if(me.elims>=scoreLimit){ if(net) net.send({t:'win',id:me.id,name:me.name}); endMatch(me.id,me.name); }
 }
+function startKillCam(focus, banner, then){
+  killCam={t:0, dur:4.2, focus:focus.clone(), then};
+  if(meBody) meBody.visible=true;
+  $("killbanner").innerHTML=banner; $("killbanner").style.display='block'; $("cinebars").style.display='block';
+  $("hud").querySelectorAll('#crosshair,#botleft,#botright,#killfeed,#scopeOverlay').forEach(e=>e.style.visibility='hidden');
+}
+function updateKillCam(dt){
+  killCam.t+=dt; const a=1.1+killCam.t*0.5, r=7-Math.min(2.6,killCam.t*0.62); const f=killCam.focus;
+  camera.position.set(f.x+Math.cos(a)*r, f.y+2.7, f.z+Math.sin(a)*r);
+  camera.up.set(0,1,0); camera.lookAt(f.x, f.y+0.5, f.z);
+  camera.fov=lerp(camera.fov,44,0.12); camera.updateProjectionMatrix();
+  if(killCam.t>=killCam.dur){ const then=killCam.then; killCam=null;
+    $("killbanner").style.display='none'; $("cinebars").style.display='none';
+    $("hud").querySelectorAll('#crosshair,#botleft,#botright,#killfeed,#scopeOverlay').forEach(e=>e.style.visibility='');
+    if(then) then(); }
+}
 function endMatch(winnerId,winnerName){
   if(matchOver) return; matchOver=true; me.ads=false; mouseDown=false;
   if(document.pointerLockElement) document.exitPointerLock();
   const iWon=winnerId===me.id;
-  const t=$("endtitle"); t.textContent=iWon?"VICTORY":"DEFEAT"; t.className=iWon?'win':'lose';
-  $("endsub").textContent=iWon?`You reached ${scoreLimit} eliminations`:`${winnerName} won with ${scoreLimit} eliminations`;
-  const rows=[{name:me.name+" (you)",kills:me.kills,deaths:me.deaths,color:me.color}];
-  for(const id in players){ const p=players[id]; rows.push({name:p.name,kills:p.kills,deaths:p.deaths,color:p.color}); }
-  rows.sort((a,b)=>b.kills-a.kills);
-  $("endrows").innerHTML=rows.map(r=>{ const c=new THREE.Color(r.color).getHexString(); return `<tr><td><span class="dot" style="background:#${c}"></span>${esc(r.name)}</td><td class="k">${r.kills}</td><td class="d">${r.deaths}</td></tr>`; }).join('');
-  $("pause").style.display='none'; $("endscreen").style.display='flex';
+  const showEnd=()=>{
+    const t=$("endtitle"); t.textContent=iWon?"VICTORY":"DEFEAT"; t.className=iWon?'win':'lose';
+    $("endsub").textContent=iWon?`You reached ${scoreLimit} eliminations`:`${winnerName} won with ${scoreLimit} eliminations`;
+    const rows=[{name:me.name+" (you)",kills:me.kills,deaths:me.deaths,color:me.color}];
+    for(const id in players){ const p=players[id]; rows.push({name:p.name,kills:p.kills,deaths:p.deaths,color:p.color}); }
+    rows.sort((a,b)=>b.kills-a.kills);
+    $("endrows").innerHTML=rows.map(r=>{ const c=new THREE.Color(r.color).getHexString(); return `<tr><td><span class="dot" style="background:#${c}"></span>${esc(r.name)}</td><td class="k">${r.kills}</td><td class="d">${r.deaths}</td></tr>`; }).join('');
+    $("pause").style.display='none'; $("endscreen").style.display='flex';
+  };
+  // FINAL KILL CAM — orbit the winning kill, then the result screen
+  let focus=null, banner=null;
+  if(iWon && lastKillScene && performance.now()-lastKillScene.t<3500){ focus=lastKillScene.victim; banner='FINAL KILL<span>'+esc(me.name)+' · '+esc(lastKillScene.weapon)+'</span>'; }
+  else if(players[winnerId] && players[winnerId].eye){ focus=players[winnerId].eye; banner='FINAL KILL<span>'+esc(winnerName)+'</span>'; }
+  if(focus) startKillCam(focus, banner, showEnd); else showEnd();
 }
 function resetScores(){ me.kills=0; me.deaths=0; me.elims=0; for(const id in players){ players[id].kills=0; players[id].deaths=0; } refreshBoard(); }
 function rematch(broadcast){
@@ -1831,6 +1863,8 @@ function leaveMatch(){
   clearEntities();
   me.kills=0; me.deaths=0; me.elims=0; me.hp=100; me.alive=true; me.stance='stand'; me.prone=false; me.ads=false;
   if(meBody) meBody.visible=false;
+  killCam=null; lastKillScene=null; $("killbanner").style.display='none'; $("cinebars").style.display='none';
+  $("hud").querySelectorAll('#crosshair,#botleft,#botright,#killfeed,#scopeOverlay').forEach(e=>e.style.visibility='');
   if(document.pointerLockElement) document.exitPointerLock();
   ['hud','pause','endscreen','respawn','wavebox','roombox'].forEach(idd=>$(idd).style.display='none');
   $("menu").style.display='flex'; status(""); updateLoadoutBar();
@@ -1897,7 +1931,8 @@ function handleNetMsg(msg){
     case 'shot':{ const o=new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]); spawnTracer(o,new THREE.Vector3(msg.d[0],msg.d[1],msg.d[2]));
       const dist=o.distanceTo(me.pos); SFX.shot(msg.c||'rifle', false, clamp(1-dist/70,0.05,0.85)); break; }
     case 'hit': if(msg.target===me.id) takeDamage(msg.dmg,msg.by); break;
-    case 'death':{ const v=players[msg.who],k=players[msg.by]; if(v)v.deaths++; if(msg.by===me.id){ me.kills++; me.elims++; refreshBoard(); toast("Eliminated "+(v?v.name:'enemy')); announceKill(); checkWin(); } else if(k)k.kills++; if(v&&k)addKill(k.name,v.name); else if(v)addKill(msg.by===me.id?me.name:'enemy',v.name); refreshBoard(); break; }
+    case 'death':{ const v=players[msg.who],k=players[msg.by]; if(v)v.deaths++; if(msg.by===me.id){ me.kills++; me.elims++; refreshBoard(); toast("Eliminated "+(v?v.name:'enemy')); announceKill();
+      if(v) lastKillScene={victim:v.eye.clone(), weapon:WEAPON.name, t:performance.now()}; checkWin(); } else if(k)k.kills++; if(v&&k)addKill(k.name,v.name); else if(v)addKill(msg.by===me.id?me.name:'enemy',v.name); refreshBoard(); break; }
     case 'win': endMatch(msg.id,msg.name); break;
     case 'rematch': rematch(false); break;
     case 'zsnap': if(!net.isHost) applyZSnap(msg); break;
@@ -1948,13 +1983,16 @@ function animate(){
   requestAnimationFrame(animate);
   const dt=Math.min(clock.getDelta(),0.05); const now=performance.now();
   if(started){
-    if(pointerLocked&&mouseDown){ if(WEAPON.auto||WEAPON.melee) tryFire(now); else if(semiReady){ tryFire(now); semiReady=false; } }
-    updateMovement(dt); updateRemotes(dt); updateTracers(dt);
-    if(zombieMode) updateZombies(dt);
-    if(bots.length) updateBots(dt);
-    for(const d of dummies){ if(!d.dead){ d.t+=dt; d.group.position.x+=Math.sin(d.t*0.8)*0.004; } }
-    updateParkourTimer();
-    netTick(now);
+    if(killCam){ updateKillCam(dt); }
+    else {
+      if(pointerLocked&&mouseDown){ if(WEAPON.auto||WEAPON.melee) tryFire(now); else if(semiReady){ tryFire(now); semiReady=false; } }
+      updateMovement(dt); updateRemotes(dt); updateTracers(dt);
+      if(zombieMode) updateZombies(dt);
+      if(bots.length) updateBots(dt);
+      for(const d of dummies){ if(!d.dead){ d.t+=dt; d.group.position.x+=Math.sin(d.t*0.8)*0.004; } }
+      updateParkourTimer();
+      netTick(now);
+    }
   }
   renderer.render(scene,camera);
   renderPreview(dt);
