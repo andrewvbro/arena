@@ -1522,7 +1522,7 @@ function updateMovement(dt){
   applyCameraRot();
   // first-person body (visible looking down; scales with stance so it stays below the eye)
   if(meBody){
-    if(me.stance==='prone'){ meBody.visible=false; }   // own prone body would fill the low camera view
+    if(me.stance==='prone' || me.ads){ meBody.visible=false; }   // hide own body while prone or aiming (clean sight picture)
     else { meBody.visible=true; meBody.position.set(me.pos.x,me.footY,me.pos.z); meBody.rotation.y=me.yaw; animateWalk(meBody, Math.hypot(me.vel.x,me.vel.z), dt); poseHumanoid(meBody, me.stance, me.footY); }
   }
   // spawn protection countdown
