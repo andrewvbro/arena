@@ -531,7 +531,7 @@ function B(w,h,d,color,x,y,z,rough){
   m.position.set(x,y,z); m.castShadow=true; m.receiveShadow=true; mapGroup.add(m); regBox(m,w,h,d); return m;
 }
 function deco(mesh){ mesh.castShadow=true; mesh.receiveShadow=true; mapGroup.add(mesh); return mesh; }
-function S(x,z){ SPAWNS.push([x,z]); }
+function S(x,z,y){ SPAWNS.push([x,z,y||0]); }   // optional spawn foot height (e.g. on a roof)
 
 const MAPS=[
  {id:'warehouse',name:'Warehouse',desc:'Indoor crates · medium',c1:'#3a4150',c2:'#55504a',size:32,bg:0x141c26,fog:[40,110],ground:0x2a3340},
@@ -541,7 +541,7 @@ const MAPS=[
  {id:'rooftops',name:'Rooftops',desc:'Rooftops above a cloudy void',c1:'#6a6470',c2:'#454050',size:42,bg:0xaeb9c6,fog:[40,150],ground:0xb8c4d0,cloud:1},
  {id:'forest',name:'Forest',desc:'Trees & rocks · prone in rocks to hide',c1:'#3a5a2a',c2:'#5a4632',size:46,bg:0x14201a,fog:[40,130],ground:0x2e3a24},
  {id:'snowyard',name:'Snowyard',desc:'Containers in snow',c1:'#9fb0bc',c2:'#6a7682',size:40,bg:0x2a3340,fog:[45,120],ground:0xc6d2dc},
- {id:'metropolis',name:'Metropolis',desc:'HUGE city grid',c1:'#4a505c',c2:'#5c5246',size:92,bg:0x10141c,fog:[80,260],ground:0x2c3038},
+ {id:'metropolis',name:'Metropolis',desc:'HUGE city — fight on the rooftops, falling = death',c1:'#4a505c',c2:'#5c5246',size:92,bg:0x10141c,fog:[80,260],ground:0x2c3038,void:8},
  {id:'overlord',name:'Operation Overlord',desc:'D-Day beach landing',c1:'#8a7a52',c2:'#5a5550',size:48,bg:0x6a7480,fog:[55,170],ground:0xb6a472},
 ];
 function mapById(id){ return MAPS.find(m=>m.id===id)||MAPS[0]; }
@@ -571,6 +571,7 @@ function hedgehog(x,z){ const m=new THREE.MeshStandardMaterial({color:0x55585c,r
 }
 function buildMap(id){
   const M=mapById(id); loadout.map=id; ARENA=M.size;
+  VOIDY = M.void!=null ? M.void : -1000;   // fall below this = death (only set on rooftop-style maps)
   clearMap();
   scene.background=new THREE.Color(M.bg);
   scene.fog=new THREE.Fog(M.bg,M.fog[0],M.fog[1]);
@@ -638,10 +639,23 @@ function buildMap(id){
       if(Math.random()<0.4) B(long?6:2.5,2.6,long?2.5:6,cols[(i+1)%4],x,3.9,z); }   // stacked containers
     for(let i=0;i<8;i++){ const s=rand(1.6,3); const m=new THREE.Mesh(new THREE.SphereGeometry(s,8,6), new THREE.MeshStandardMaterial({color:0xe8eef4,roughness:1})); m.scale.y=0.5; m.position.set(rand(-34,34),s*0.3,rand(-34,34)); deco(m); regBox(m,s*1.6,s,s*1.6); }   // snow mounds
   } else if(id==='metropolis'){
-    for(let gx=-4;gx<=4;gx++) for(let gz=-4;gz<=4;gz++){ if(gx===0||gz===0) continue;
-      const h=rand(12,42), w=rand(8,12), dd=rand(8,12); B(w,h,dd,(gx+gz)%2?c1:c2, gx*18, h/2, gz*18); }
-    for(let i=0;i<40;i++){ const x=rand(-82,82),z=rand(-82,82); if(Math.abs(x)>3&&Math.abs(z)>3&&Math.hypot(x,z)>8) B(rand(1.6,2.4),2,rand(1.6,2.4),0x40464f,x,1,z); }
-    for(let i=0;i<10;i++) B(5,1,2,0x2a2e34,rand(-70,70),0.5,rand(-70,70));   // cars/barriers
+    // FIGHT ON THE ROOFTOPS — buildings with walkable flat tops, gaps = the deadly street below
+    const gn=3, gap=16, roof=16;
+    for(let gx=-gn;gx<=gn;gx++) for(let gz=-gn;gz<=gn;gz++){ const x=gx*gap, z=gz*gap, h=roof+rand(-2,3);
+      B(11,h,11,(gx+gz)%2?c1:c2,x,h/2,z);
+      // rooftop parapets (cover) + AC unit + roof-access hut
+      B(11,0.7,0.5,c2,x,h+0.35,z-5.25); B(11,0.7,0.5,c2,x,h+0.35,z+5.25); B(0.5,0.7,11,c2,x-5.25,h+0.35,z); B(0.5,0.7,11,c2,x+5.25,h+0.35,z);
+      if(Math.random()<0.6) B(2,1.4,2,0x3a4048,x+rand(-2.5,2.5),h+0.7,z+rand(-2.5,2.5));
+      B(1.6,1.9,1.6,0x2c3138,x+3,h+0.95,z+3);
+      S(x,z,h);   // spawn on this roof
+    }
+    // rooftop plank bridges across the gaps so you can cross
+    for(let gx=-gn;gx<gn;gx++){ B(5,0.4,2.6,0x55504a,gx*gap+gap/2,roof,0); B(5,0.4,2.6,0x55504a,gx*gap+gap/2,roof,-gap); B(5,0.4,2.6,0x55504a,gx*gap+gap/2,roof,gap); }
+    for(let gz=-gn;gz<gn;gz++){ B(2.6,0.4,5,0x55504a,0,roof,gz*gap+gap/2); B(2.6,0.4,5,0x55504a,gap,roof,gz*gap+gap/2); B(2.6,0.4,5,0x55504a,-gap,roof,gz*gap+gap/2); }
+    // taller background skyline towers (not spawned on)
+    for(let i=0;i<7;i++){ const x=rand(-82,82),z=rand(-82,82); if(Math.abs(x)<56&&Math.abs(z)<56)continue; const h=rand(28,52); B(rand(9,13),h,rand(9,13),c1,x,h/2,z); }
+    // a few street props far below (visible from the roofs)
+    for(let i=0;i<22;i++) B(rand(3,5),1,rand(1.6,2.4),0x2a2e34,rand(-46,46),0.5,rand(-46,46));
   } else if(id==='overlord'){
     // D-DAY beach: water on -Z, beach obstacles, sea wall, bunkers, trench on +Z
     const water=new THREE.Mesh(new THREE.PlaneGeometry(ARENA*2,28), new THREE.MeshStandardMaterial({color:0x2a5a6e,roughness:0.3,metalness:0.2,transparent:true,opacity:0.9}));
@@ -665,16 +679,16 @@ function buildMap(id){
     S(-r,-r); S(r,r); S(-r,r); S(r,-r); S(0,r); S(0,-r); S(r,0); S(-r,0);
     S(-r*0.5,-r*0.5); S(r*0.5,r*0.5); }
 }
-function spawnPoint(){ const s=SPAWNS[Math.floor(Math.random()*SPAWNS.length)]; return new THREE.Vector3(s[0],1.6,s[1]); }
+function spawnPoint(){ const s=SPAWNS[Math.floor(Math.random()*SPAWNS.length)]; return new THREE.Vector3(s[0],(s[2]||0)+1.6,s[1]); }
 // a spawn point comfortably away from `from` (so enemies don't spawn on the player)
 function spawnPointAway(from, minDist){
   const md = minDist==null ? Math.min(28, ARENA*0.7) : minDist;
   const far = SPAWNS.filter(s=>Math.hypot(s[0]-from.x, s[1]-from.z) > md);
-  if(far.length){ const s=far[Math.floor(Math.random()*far.length)]; return new THREE.Vector3(s[0],1.6,s[1]); }
+  if(far.length){ const s=far[Math.floor(Math.random()*far.length)]; return new THREE.Vector3(s[0],(s[2]||0)+1.6,s[1]); }
   // none far enough → pick the farthest available
   let best=SPAWNS[0], bd=-1;
   for(const s of SPAWNS){ const d=Math.hypot(s[0]-from.x, s[1]-from.z); if(d>bd){ bd=d; best=s; } }
-  return new THREE.Vector3(best[0],1.6,best[1]);
+  return new THREE.Vector3(best[0],(best[2]||0)+1.6,best[1]);
 }
 // hidden from enemies: prone inside a hide-spot (e.g. a hollow rock)
 function playerHidden(){ if(!me.alive||!me.prone) return false; for(const h of hideSpots){ if(Math.hypot(me.pos.x-h.x, me.pos.z-h.z) < h.r) return true; } return false; }
@@ -727,7 +741,7 @@ const GUNVIS={
   glock17:{fin:'black'}, m1911:{fin:'steel',fw:1}, deagle:{fin:'stain',bar:1.5,scale:1.12},
   mp5:{fin:'black'}, uzi:{fin:'blk2',stock:'fold'}, p90:{fin:'od',shape:'bullpup'}, vector:{fin:'grey'},
   ak47:{fin:'wood'}, m4a1:{fin:'black'}, aug:{fin:'od',shape:'bullpup'}, famas:{fin:'blk2',shape:'bullpup'},
-  scarh:{fin:'fde'}, g36:{fin:'od'}, r870:{fin:'wood'}, spas12:{fin:'black',stock:'fold'}, saiga:{fin:'blk2',mag:'box'},
+  scarh:{fin:'fde',feat:'rail'}, g36:{fin:'od',feat:'carry'}, r870:{fin:'wood'}, spas12:{fin:'black',stock:'fold'}, saiga:{fin:'blk2',mag:'box'},
   awp:{fin:'od'}, barrett:{fin:'black',bar:1.3,scale:1.1}, svd:{fin:'wood'}, m249:{fin:'black'},
   // secondaries
   m9:{fin:'steel'}, p226:{fin:'black'}, fiveseven:{fin:'fde'}, cz75:{fin:'steel'}, glock18:{fin:'blk2',mag:'ext'},
@@ -737,10 +751,10 @@ const GUNVIS={
   sawedoff:{fin:'wood',bar:0.55,stock:'none'}, derringer:{fin:'stain',scale:0.72}, flaregun:{fin:'flare',scale:0.95},
   rhino:{fin:'grey',bar:1.1}, ragingbull:{fin:'stain',bar:1.3,scale:1.06},
   // expansion
-  mp7:{fin:'black',scale:0.92}, ump45:{fin:'fde'}, thompson:{fin:'wood'},
-  m16a4:{fin:'black',bar:1.15,stock:'fixed'}, galil:{fin:'od'}, tavor:{fin:'blk2',shape:'bullpup'},
-  an94:{fin:'plum'}, m1garand:{fin:'wood',bar:1.2,stock:'fixed'}, rpk:{fin:'wood',bar:1.2},
-  mg42:{fin:'blued',bar:1.1}, benelli:{fin:'black'}, aa12:{fin:'grey',mag:'box'},
+  mp7:{fin:'black',scale:0.92}, ump45:{fin:'fde'}, thompson:{fin:'wood',feat:'drum'},
+  m16a4:{fin:'black',bar:1.15,stock:'fixed',feat:'carry'}, galil:{fin:'od'}, tavor:{fin:'blk2',shape:'bullpup'},
+  an94:{fin:'plum',feat:'rail'}, m1garand:{fin:'wood',bar:1.2,stock:'fixed',feat:'iron'}, rpk:{fin:'wood',bar:1.2,feat:'drum'},
+  mg42:{fin:'blued',bar:1.1}, benelli:{fin:'black'}, aa12:{fin:'grey',mag:'box',feat:'drum'},
   l96:{fin:'grey'}, cheytac:{fin:'fde',bar:1.25,scale:1.06},
   mk23:{fin:'black',bar:1.2}, ots33:{fin:'blued'}, anaconda:{fin:'stain',bar:1.15}, judge:{fin:'blued',bar:0.7},
   tomahawk:{}, kunai:{},
@@ -749,7 +763,7 @@ function gunVis(id,cat){
   const o=GUNVIS[id]||{}; const f=FIN[o.fin]||FIN.black;
   const defStock={rifle:'fixed',sniper:'fixed',lmg:'fixed',shotgun:'fixed',smg:'tube'}[cat]||'none';
   return { recv:f.r, fur:f.f, mRecv:!!f.m, fw:!!(f.w||o.fw),
-    bar:o.bar||1, stock:o.stock||defStock, mag:o.mag, scale:o.scale||1, shape:o.shape };
+    bar:o.bar||1, stock:o.stock||defStock, mag:o.mag, scale:o.scale||1, shape:o.shape, feat:o.feat };
 }
 // build a detailed gun model as a standalone group (shared by viewmodel + menu preview)
 function makeGunModel(W){
@@ -888,6 +902,12 @@ function makeGunModel(W){
     const tg=part(new THREE.TorusGeometry(0.038,0.007,8,18), GM2, 0,-0.075,tgz); tg.rotation.y=Math.PI/2; g.add(tg);
     g.add(part(new THREE.BoxGeometry(0.014,0.045,0.012), GM2, 0,-0.05,tgz-0.01));   // trigger blade
   }
+  // per-gun signature features (so guns within a category read differently)
+  const feat=V.feat;
+  if(feat==='carry' && cat==='rifle'){ g.add(part(new THREE.BoxGeometry(0.045,0.05,0.32),GM2,0,0.135,-0.2)); g.add(part(new THREE.BoxGeometry(0.025,0.07,0.04),GM2,0,0.09,-0.06)); g.add(part(new THREE.BoxGeometry(0.025,0.07,0.04),GM2,0,0.09,-0.34)); }
+  else if(feat==='rail' && (cat==='rifle'||cat==='lmg')){ g.add(part(new THREE.BoxGeometry(0.05,0.035,0.52),GM2,0,0.11,-0.2)); g.add(part(new THREE.BoxGeometry(0.05,0.05,0.06),GM2,0,0.13,-0.34)); }
+  else if(feat==='iron' && cat==='rifle'){ g.add(part(new THREE.BoxGeometry(0.018,0.08,0.018),GM2,0,0.12,-0.8)); g.add(part(new THREE.BoxGeometry(0.05,0.05,0.05),GM2,0,0.105,0.04)); }
+  if(feat==='drum'){ const drum=part(new THREE.CylinderGeometry(0.12,0.12,0.1,18),GM2,0,-0.17,-0.06); drum.rotation.z=Math.PI/2; g.add(drum); }
 
   if((W.slot==='primary'||W.slot==='secondary') && cat!=='knife'){
     const a = W.slot==='primary'?loadout.attach:loadout.attachSec;
@@ -1130,13 +1150,14 @@ function spawnBot(name){
   const color=0xd0402f; const g=buildHumanoid(color,true); scene.add(g);
   const sp=spawnPointAway(me.pos);
   const b={group:g,name,color,hp:100,pos:sp.clone(),eye:sp.clone(),yaw:0,fireCd:rand(0.5,1.5),strafe:Math.random()<0.5?1:-1,strafeT:0,alive:true,kills:0,deaths:0,
-    footY:0,vy:0,onGround:true,stance:'stand',stanceT:rand(0.5,1.5),slideT:0,slideDir:new THREE.Vector3(),target:null,targetT:0,wander:null,wanderT:0};
+    footY:sp.y-1.6,vy:0,onGround:true,stance:'stand',stanceT:rand(0.5,1.5),slideT:0,slideDir:new THREE.Vector3(),target:null,targetT:0,wander:null,wanderT:0};
   bots.push(b); return b;
 }
 function spawnBots(n){ const names=['CLAUDE','CLAUDE-2','CLAUDE-3','CLAUDE-4','CLAUDE-5','CLAUDE-6']; for(let i=0;i<n;i++) spawnBot(names[i]||('BOT-'+i)); refreshBoard(); }
 function botLOS(from,to){ const dir=new THREE.Vector3().subVectors(to,from); const dist=dir.length(); dir.normalize(); ray.set(from,dir); ray.far=dist; const oh=ray.intersectObjects(obstacleMeshes,false); return !(oh.length && oh[0].distance<dist-0.5); }
-function botBlock(p){ for(const o of obstacles){ if(o.max.y<0.4) continue; const minx=o.min.x-0.35,maxx=o.max.x+0.35,minz=o.min.z-0.35,maxz=o.max.z+0.35;
-  if(p.x>minx&&p.x<maxx&&p.z>minz&&p.z<maxz){ const a=p.x-minx,b=maxx-p.x,c=p.z-minz,d=maxz-p.z,m=Math.min(a,b,c,d); if(m===a)p.x=minx; else if(m===b)p.x=maxx; else if(m===c)p.z=minz; else p.z=maxz; } } }
+function botBlock(b){ const p=b.pos; for(const o of obstacles){ const top=o.max.y; if(top<=b.footY+0.6) continue; if(b.footY>=top-0.02) continue;   // can stand on / is above it
+  const minx=o.min.x-0.35,maxx=o.max.x+0.35,minz=o.min.z-0.35,maxz=o.max.z+0.35;
+  if(p.x>minx&&p.x<maxx&&p.z>minz&&p.z<maxz){ const a=p.x-minx,bb=maxx-p.x,c=p.z-minz,d=maxz-p.z,m=Math.min(a,bb,c,d); if(m===a)p.x=minx; else if(m===bb)p.x=maxx; else if(m===c)p.z=minz; else p.z=maxz; } } }
 // nearest enemy of bot b: the player OR another bot (free-for-all)
 const BOT_DETECT=38;   // bots only engage enemies within this range + line of sight; else they wander
 function botPickTarget(b){
@@ -1151,8 +1172,6 @@ function updateBots(dt){
     b.targetT-=dt;
     if(!botTargetValid(b.target) || b.targetT<=0){ b.target=botPickTarget(b); b.targetT=rand(0.7,1.4); }
     const t=b.target, engaged=botTargetValid(t);
-    // gravity
-    b.vy-=GRAV*dt; b.footY+=b.vy*dt; if(b.footY<=0){ b.footY=0; b.vy=0; b.onGround=true; } else b.onGround=false;
     b.strafeT-=dt; if(b.strafeT<=0){ b.strafeT=rand(1,2.5); b.strafe*=-1; }
     let spd=4.6, dist=999; const move=new THREE.Vector3();
     if(engaged){
@@ -1179,7 +1198,10 @@ function updateBots(dt){
       if(wd<2.5){ b.wanderT=0; } else { toW.normalize(); b.yaw=lerpAngle(b.yaw,Math.atan2(toW.x,toW.z),0.08); move.copy(toW); spd=3.0; }
     }
     if(move.lengthSq()>0){ move.normalize().multiplyScalar(spd*dt); b.pos.x+=move.x; b.pos.z+=move.z; }
-    botBlock(b.pos); b.pos.x=clamp(b.pos.x,-ARENA+1,ARENA-1); b.pos.z=clamp(b.pos.z,-ARENA+1,ARENA-1);
+    botBlock(b); b.pos.x=clamp(b.pos.x,-ARENA+1,ARENA-1); b.pos.z=clamp(b.pos.z,-ARENA+1,ARENA-1);
+    // vertical — stand on rooftops/cover tops (groundUnder), gravity off ledges
+    const prevF=b.footY; b.vy-=GRAV*dt; b.footY+=b.vy*dt;
+    const bg=groundUnder(b.pos.x,b.pos.z,prevF); if(b.footY<=bg){ b.footY=bg; b.vy=0; b.onGround=true; } else b.onGround=false;
     const eyeH = b.stance==='prone'?0.5 : (b.stance==='crouch'||b.stance==='slide')?0.95 : 1.6;
     b.eye.set(b.pos.x, b.footY+eyeH, b.pos.z);
     const bx=b.group.position.x, bz=b.group.position.z;
@@ -1708,7 +1730,7 @@ function die(byId){
   setTimeout(respawn,2200);
 }
 function respawn(){
-  me.pos.copy(spawnPoint()); me.footY=0; me.vy=0; me.vel.set(0,0,0); me.stance='stand'; me.prone=false;
+  { const sp=spawnPoint(); me.pos.copy(sp); me.footY=sp.y-1.6; } me.vy=0; me.vel.set(0,0,0); me.stance='stand'; me.prone=false;
   me.alive=true; initLoadoutAmmo(); currentSlot='x'; equip('primary'); me.hp=MAXHP; me.spawnProtT=SPAWN_PROT;
   updateHP(); $("respawn").style.display='none';
 }
@@ -1812,7 +1834,7 @@ function sendHello(){ if(net) net.send({t:'hello',name:me.name,color:me.color,ki
 function handleNetMsg(msg){
   if(!msg||msg.from===me.id) return; const id=msg.from;
   switch(msg.t){
-    case 'gameinfo': if(msg.map&&msg.map!==loadout.map) buildMap(msg.map); zombieMode=!!msg.zombie; if(msg.scoreLimit) scoreLimit=msg.scoreLimit; infiniteAmmo=!!msg.infAmmo; if(zombieMode)$("wavebox").style.display='block'; me.pos.copy(spawnPoint()); me.footY=0; break;
+    case 'gameinfo': if(msg.map&&msg.map!==loadout.map) buildMap(msg.map); zombieMode=!!msg.zombie; if(msg.scoreLimit) scoreLimit=msg.scoreLimit; infiniteAmmo=!!msg.infAmmo; if(zombieMode)$("wavebox").style.display='block'; { const sp=spawnPoint(); me.pos.copy(sp); me.footY=sp.y-1.6; } break;
     case 'hello':{ const p=ensurePlayer(id,{name:msg.name,color:msg.color}); p.name=msg.name; p.color=msg.color; p.kills=msg.kills||p.kills; p.deaths=msg.deaths||p.deaths; if(p.tag){ p.group.remove(p.tag); p.tag=makeTag(p.name,new THREE.Color(p.color)); p.tag.position.y=2.3; p.group.add(p.tag);} refreshBoard(); break; }
     case 'state':{ const p=ensurePlayer(id); p.tEye.set(msg.p[0],msg.p[1],msg.p[2]); p.tFoot=msg.f; p.tYaw=msg.y; p.stance=msg.st||'stand'; p.dead=!!msg.dead; p.prot=!!msg.prot; p.last=performance.now(); break; }
     case 'shot':{ const o=new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]); spawnTracer(o,new THREE.Vector3(msg.d[0],msg.d[1],msg.d[2]));
@@ -1945,7 +1967,7 @@ function beginGame(){
   $("wavebox").style.display=zombieMode?'block':'none';
   if(botCount>0) spawnBots(botCount);
   else if(!zombieMode && Object.keys(players).length===0){ makeDummy(-6,-8); makeDummy(6,-3); makeDummy(0,8); }
-  me.pos.copy(spawnPoint()); me.footY=0; me.vy=0;
+  { const sp=spawnPoint(); me.pos.copy(sp); me.footY=sp.y-1.6; me.vy=0; }
   if(meBody){ scene.remove(meBody); meBody.traverse(o=>{if(o.geometry)o.geometry.dispose();}); }
   meBody=buildHumanoid(me.color,false); meBody.visible=true; scene.add(meBody);
   initLoadoutAmmo(); currentSlot='x'; equip('primary'); me.hp=MAXHP; me.spawnProtT=SPAWN_PROT;
