@@ -293,7 +293,7 @@ let me={ id:null,name:"Player",color:0x7df0b0,hue:0.4,
   yaw:0,pitch:0,hp:100,alive:true,kills:0,deaths:0,elims:0,
   footY:0,vy:0,eyeH:1.6,onGround:true,
   stance:'stand',prone:false,slideT:0,slideDir:new THREE.Vector3(),
-  wallNormal:null,wallRunCharge:0,wallRunning:false,wasWallRun:false,wallTilt:0,
+  wallNormal:null,wallRunCharge:0,wallRunning:false,wasWallRun:false,wallTilt:0,lastWallN:null,
   lean:0,leanTarget:0,ads:false,inspectT:0,spawnProtT:0,jumps:0,dashCd:0,
   spinWindow:0,prevYaw:0,adsStartT:0,shotTags:null };
 const SPAWN_PROT=2.5; // seconds of invulnerability after spawning
@@ -1177,7 +1177,7 @@ function updateBots(dt){
     if(engaged){
       const tgtPos=t.kind==='me'?me.pos:bots[t.idx].pos;
       const toP=new THREE.Vector3(tgtPos.x-b.pos.x,0,tgtPos.z-b.pos.z); dist=toP.length(); if(dist>0.01) toP.normalize();
-      b.yaw=Math.atan2(toP.x,toP.z);
+      b.yaw=Math.atan2(-toP.x,-toP.z);   // avatar front is -Z → face the target, not away from it
       b.stanceT-=dt;
       if(b.stanceT<=0 && b.onGround){ const r=Math.random(); b.stanceT=rand(0.5,1.6);
         if(b.stance==='slide') b.stance='crouch';
@@ -1195,7 +1195,7 @@ function updateBots(dt){
       b.wanderT-=dt;
       if(b.wanderT<=0 || !b.wander){ b.wanderT=rand(2.5,5); b.wander=new THREE.Vector3(rand(-ARENA+3,ARENA-3),0,rand(-ARENA+3,ARENA-3)); }
       const toW=new THREE.Vector3(b.wander.x-b.pos.x,0,b.wander.z-b.pos.z); const wd=toW.length();
-      if(wd<2.5){ b.wanderT=0; } else { toW.normalize(); b.yaw=lerpAngle(b.yaw,Math.atan2(toW.x,toW.z),0.08); move.copy(toW); spd=3.0; }
+      if(wd<2.5){ b.wanderT=0; } else { toW.normalize(); b.yaw=lerpAngle(b.yaw,Math.atan2(-toW.x,-toW.z),0.08); move.copy(toW); spd=3.0; }
     }
     if(move.lengthSq()>0){ move.normalize().multiplyScalar(spd*dt); b.pos.x+=move.x; b.pos.z+=move.z; }
     botBlock(b); b.pos.x=clamp(b.pos.x,-ARENA+1,ARENA-1); b.pos.z=clamp(b.pos.z,-ARENA+1,ARENA-1);
@@ -1413,7 +1413,7 @@ function updateMovement(dt){
   me.vel.x=lerp(me.vel.x,tvx,accel); me.vel.z=lerp(me.vel.z,tvz,accel);
   // gravity + jumps (ground jump, double jump, slide-jump launch)
   me.vy-=GRAV*dt;
-  if(me.onGround){ me.wallRunCharge=WALLRUN_TIME; me.jumps=0; }
+  if(me.onGround){ me.wallRunCharge=WALLRUN_TIME; me.jumps=0; me.lastWallN=null; }
   if(me.dashCd>0) me.dashCd-=dt;
   if(keys['Space']){
     if(me.onGround && me.stance!=='prone'){
@@ -1432,16 +1432,20 @@ function updateMovement(dt){
   const wantRun=(keys['KeyW']||keys['ShiftLeft']||keys['ShiftRight']);
   let tiltTarget=0;
   me.wallRunning=false;
-  if(!me.onGround && me.wallNormal && me.wallRunCharge>0 && hSpeed>4.5 && wantRun && me.vy<7){
-    me.wallRunning=true; me.wallRunCharge-=dt; me.jumps=0;   // wall-run refreshes your air-jumps
-    if(!me.wasWallRun) me.vy=Math.max(me.vy,3.0);          // little hop onto the wall
-    me.vy += GRAV*0.82*dt;                                  // cancel most gravity → glide along
-    const n=me.wallNormal; const tan=new THREE.Vector3(-n.z,0,n.x);
-    if((me.vel.x*tan.x+me.vel.z*tan.z)<0) tan.multiplyScalar(-1);
-    const run=Math.max(hSpeed,7.5);
-    me.vel.x=tan.x*run - n.x*2.2; me.vel.z=tan.z*run - n.z*2.2; // run along + hug wall
-    const side=(right.x*n.x+right.z*n.z); tiltTarget = side>0? 0.17 : -0.17;
-    if(keys['Space']){ me.vy=JUMP*1.02; me.vel.x+=n.x*9; me.vel.z+=n.z*9; me.wallRunning=false; me.wallRunCharge=0; me.jumps=1; keys['Space']=false; }
+  if(!me.onGround && me.wallNormal && hSpeed>4.5 && wantRun && me.vy<7){
+    // touching a DIFFERENT wall refreshes wall-run (chain walls); same wall keeps depleting
+    if(!me.lastWallN || me.wallNormal.dot(me.lastWallN)<0.9){ me.wallRunCharge=WALLRUN_TIME; me.jumps=0; }
+    if(me.wallRunCharge>0){
+      me.wallRunning=true; me.wallRunCharge-=dt; me.jumps=0; me.lastWallN=me.wallNormal.clone();
+      if(!me.wasWallRun) me.vy=Math.max(me.vy,3.0);          // little hop onto the wall
+      me.vy += GRAV*0.82*dt;                                  // cancel most gravity → glide along
+      const n=me.wallNormal; const tan=new THREE.Vector3(-n.z,0,n.x);
+      if((me.vel.x*tan.x+me.vel.z*tan.z)<0) tan.multiplyScalar(-1);
+      const run=Math.max(hSpeed,7.5);
+      me.vel.x=tan.x*run - n.x*2.2; me.vel.z=tan.z*run - n.z*2.2; // run along + hug wall
+      const side=(right.x*n.x+right.z*n.z); tiltTarget = side>0? 0.17 : -0.17;
+      if(keys['Space']){ me.vy=JUMP*1.02; me.vel.x+=n.x*9; me.vel.z+=n.z*9; me.wallRunning=false; me.wallRunCharge=0; me.jumps=1; keys['Space']=false; }
+    }
   }
   me.wasWallRun=me.wallRunning;
   me.wallTilt=lerp(me.wallTilt,tiltTarget,1-Math.pow(0.0001,dt*0.8));
