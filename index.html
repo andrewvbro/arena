@@ -598,6 +598,16 @@ function buildMap(id){
   S(-r*0.5,-r*0.5); S(r*0.5,r*0.5);
 }
 function spawnPoint(){ const s=SPAWNS[Math.floor(Math.random()*SPAWNS.length)]; return new THREE.Vector3(s[0],1.6,s[1]); }
+// a spawn point comfortably away from `from` (so enemies don't spawn on the player)
+function spawnPointAway(from, minDist){
+  const md = minDist==null ? Math.min(28, ARENA*0.7) : minDist;
+  const far = SPAWNS.filter(s=>Math.hypot(s[0]-from.x, s[1]-from.z) > md);
+  if(far.length){ const s=far[Math.floor(Math.random()*far.length)]; return new THREE.Vector3(s[0],1.6,s[1]); }
+  // none far enough → pick the farthest available
+  let best=SPAWNS[0], bd=-1;
+  for(const s of SPAWNS){ const d=Math.hypot(s[0]-from.x, s[1]-from.z); if(d>bd){ bd=d; best=s; } }
+  return new THREE.Vector3(best[0],1.6,best[1]);
+}
 
 // ===========================================================================
 // VIEWMODEL (per-category, with attachment meshes + animatable mag)
@@ -1007,8 +1017,9 @@ function makeDummy(x,z){
 const bots=[]; let botCount=0;
 function spawnBot(name){
   const color=0xd0402f; const g=buildHumanoid(color,true); const tag=makeTag(name,new THREE.Color(color)); tag.position.y=2.3; g.add(tag); scene.add(g);
-  const sp=spawnPoint();
-  const b={group:g,name,color,hp:100,pos:sp.clone(),eye:sp.clone(),yaw:0,fireCd:rand(0.5,1.5),strafe:Math.random()<0.5?1:-1,strafeT:0,alive:true,kills:0,deaths:0};
+  const sp=spawnPointAway(me.pos);
+  const b={group:g,name,color,hp:100,pos:sp.clone(),eye:sp.clone(),yaw:0,fireCd:rand(0.5,1.5),strafe:Math.random()<0.5?1:-1,strafeT:0,alive:true,kills:0,deaths:0,
+    footY:0,vy:0,onGround:true,stance:'stand',stanceT:rand(0.5,1.5),slideT:0,slideDir:new THREE.Vector3()};
   bots.push(b); return b;
 }
 function spawnBots(n){ const names=['CLAUDE','CLAUDE-2','CLAUDE-3','CLAUDE-4','CLAUDE-5','CLAUDE-6']; for(let i=0;i<n;i++) spawnBot(names[i]||('BOT-'+i)); refreshBoard(); }
@@ -1017,20 +1028,40 @@ function botBlock(p){ for(const o of obstacles){ if(o.max.y<0.4) continue; const
   if(p.x>minx&&p.x<maxx&&p.z>minz&&p.z<maxz){ const a=p.x-minx,b=maxx-p.x,c=p.z-minz,d=maxz-p.z,m=Math.min(a,b,c,d); if(m===a)p.x=minx; else if(m===b)p.x=maxx; else if(m===c)p.z=minz; else p.z=maxz; } } }
 function updateBots(dt){
   for(const b of bots){ if(!b.alive) continue;
-    b.eye.copy(b.pos).setY(1.6);
     const toP=new THREE.Vector3(me.pos.x-b.pos.x,0,me.pos.z-b.pos.z); const dist=toP.length(); if(dist>0.01) toP.normalize();
     b.yaw=Math.atan2(toP.x,toP.z);
+    // vertical (jumping)
+    b.vy-=GRAV*dt; b.footY+=b.vy*dt; if(b.footY<=0){ b.footY=0; b.vy=0; b.onGround=true; } else b.onGround=false;
+    // strafe flip
     b.strafeT-=dt; if(b.strafeT<=0){ b.strafeT=rand(1,2.5); b.strafe*=-1; }
-    const move=new THREE.Vector3();
-    if(me.alive){ const range=13;
+    // pick a dodge behaviour (jump / slide / crouch / prone / stand)
+    b.stanceT-=dt;
+    if(b.stanceT<=0 && b.onGround){
+      const r=Math.random(); b.stanceT=rand(0.5,1.6);
+      if(b.stance==='slide') b.stance='crouch';
+      else if(r<0.16 && dist<32){ b.vy=8.2; b.stance='stand'; }                         // jump
+      else if(r<0.30 && dist<26){ b.stance='slide'; b.slideT=0.5; b.slideDir.copy(toP).applyAxisAngle(UPV, b.strafe*1.2); }  // slide
+      else if(r<0.48) b.stance='crouch';
+      else if(r<0.58) b.stance='prone';
+      else b.stance='stand';
+    }
+    // movement by stance
+    let spd=4.6; const move=new THREE.Vector3();
+    if(b.stance==='slide'){ b.slideT-=dt; if(b.slideT<=0) b.stance='crouch'; spd=9; move.copy(b.slideDir); }
+    else if(me.alive){ const range=13;
       if(dist>range+3) move.add(toP); else if(dist<range-3) move.sub(toP);
       move.add(new THREE.Vector3(toP.z,0,-toP.x).multiplyScalar(b.strafe*0.8));
+      if(b.stance==='crouch') spd=2.6; else if(b.stance==='prone') spd=1.2;
     }
-    if(move.lengthSq()>0){ move.normalize().multiplyScalar(4.5*dt); b.pos.x+=move.x; b.pos.z+=move.z; }
+    if(move.lengthSq()>0){ move.normalize().multiplyScalar(spd*dt); b.pos.x+=move.x; b.pos.z+=move.z; }
     botBlock(b.pos); b.pos.x=clamp(b.pos.x,-ARENA+1,ARENA-1); b.pos.z=clamp(b.pos.z,-ARENA+1,ARENA-1);
+    // stance height — shrinks the bot's profile (and hitbox via b.eye)
+    const eyeH = b.stance==='prone'?0.5 : (b.stance==='crouch'||b.stance==='slide')?0.95 : 1.6;
+    b.eye.set(b.pos.x, b.footY+eyeH, b.pos.z);
     const bx=b.group.position.x, bz=b.group.position.z;
-    b.group.position.set(b.pos.x,0,b.pos.z); b.group.rotation.y=b.yaw;
+    b.group.position.set(b.pos.x,b.footY,b.pos.z); b.group.rotation.y=b.yaw; b.group.scale.y=clamp(eyeH/1.6,0.3,1.05);
     animateWalk(b.group, Math.hypot(b.pos.x-bx,b.pos.z-bz)/Math.max(dt,0.001), dt);
+    // shoot
     b.fireCd-=dt;
     if(me.alive && dist<60 && b.fireCd<=0 && botLOS(b.eye,camera.position)){
       b.fireCd=rand(0.35,0.75);
@@ -1042,9 +1073,10 @@ function updateBots(dt){
     }
   }
 }
+const UPV=new THREE.Vector3(0,1,0);
 function applyBotDamage(i,dmg,head){ const b=bots[i]; if(!b||!b.alive) return; b.hp-=dmg; flash(b.group,head); if(b.hp<=0) botDie(b); }
 function botDie(b){ b.alive=false; b.group.visible=false; b.deaths++; me.kills++; me.elims++; addKill(me.name,b.name); refreshBoard(); checkWin();
-  setTimeout(()=>{ if(!started)return; b.hp=100; b.alive=true; b.pos.copy(spawnPoint()); b.group.visible=true; }, 3000); }
+  setTimeout(()=>{ if(!started)return; b.hp=100; b.alive=true; b.pos.copy(spawnPointAway(me.pos)); b.footY=0; b.vy=0; b.stance='stand'; b.group.scale.y=1; b.group.visible=true; }, 3000); }
 
 // ===========================================================================
 // AUDIO (procedural Web Audio — no asset files)
@@ -1349,8 +1381,8 @@ function castRay(origin,dir,range){
     if(th>=0&&th<bestT){bestT=th;kind='zombie';id=i;head=true;} if(tt>=0&&tt<bestT){bestT=tt;kind='zombie';id=i;head=false;}
   }
   for(let i=0;i<bots.length;i++){ const b=bots[i]; if(!b||!b.alive)continue;
-    const hc=_tmpHead.copy(b.pos).setY(1.7), tc=_tmpTorso.copy(b.pos).setY(0.95);
-    const th=raySphereHit(origin,dir,hc,0.33), tt=raySphereHit(origin,dir,tc,0.5);
+    const hc=_tmpHead.copy(b.eye), tc=_tmpTorso.copy(b.eye).setY(b.eye.y-0.6);
+    const th=raySphereHit(origin,dir,hc,0.32), tt=raySphereHit(origin,dir,tc,0.46);
     if(th>=0&&th<bestT){bestT=th;kind='bot';id=i;head=true;} if(tt>=0&&tt<bestT){bestT=tt;kind='bot';id=i;head=false;}
   }
   return {kind,id,head};
